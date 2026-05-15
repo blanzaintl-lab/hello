@@ -424,6 +424,7 @@
             <div style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center;">
                 <button class="btn btn-outline btn-sm" onclick="selectAllSlots()">Select All</button>
                 <button class="btn btn-outline btn-sm" onclick="deselectAllSlots()">Deselect All</button>
+                <button class="btn btn-sm" style="background: var(--danger); color: white;" onclick="clearAllSlots()">Clear All</button>
                 <div style="margin-left: auto; font-size: 12px; color: var(--text-dim);">
                     <span id="filledCount" style="color: var(--accent); font-weight: 600;">0</span>/10 filled,
                     <span id="selectedCountSmall" style="color: var(--accent); font-weight: 600;">0</span> selected
@@ -641,6 +642,18 @@
     function deselectAllSlots() {
         slotsData.forEach(s => s.selected = false);
         renderSlots();
+    }
+
+    async function clearAllSlots() {
+        const filled = slotsData.filter(s => s.has_cookies).length;
+        if (filled === 0) { alert('Koi cookies saved nahi hain!'); return; }
+        if (!confirm(`Kya aap sab ${filled} saved cookies delete karna chahte ho? Ye action undo nahi hoga!`)) return;
+        const resp = await fetch('/api/slots', { method: 'DELETE' });
+        const data = await resp.json();
+        if (data.status === 'cleared') {
+            alert(`${data.deleted} slot(s) clear ho gaye!`);
+            loadSlots();
+        }
     }
 
     // Modal

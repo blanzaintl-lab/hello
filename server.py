@@ -1038,6 +1038,16 @@ async def delete_slot_api(slot: int):
     return {"status": "deleted", "slot": slot}
 
 
+@app.delete("/api/slots")
+async def clear_all_slots_api():
+    deleted = 0
+    for i in range(1, MAX_SLOTS + 1):
+        if get_cookie_file(i).exists():
+            delete_slot(i)
+            deleted += 1
+    return {"status": "cleared", "deleted": deleted}
+
+
 # ── Listing APIs ──────────────────────────────────────────────────
 
 @app.post("/api/preview")
