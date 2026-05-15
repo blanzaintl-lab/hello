@@ -1,0 +1,1086 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FB Marketplace Auto Lister v6</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        :root {
+            --bg: #0f0f23;
+            --card: #1a1a2e;
+            --card-hover: #1f1f35;
+            --primary: #6c63ff;
+            --primary-hover: #5a52d5;
+            --accent: #00d4aa;
+            --danger: #ff4757;
+            --text: #e4e4e7;
+            --text-dim: #9ca3af;
+            --border: #2d2d44;
+            --success: #10b981;
+            --warning: #f59e0b;
+        }
+
+        body {
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            border-bottom: 1px solid var(--border);
+            padding: 20px 0;
+        }
+        .header-inner {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .logo { display: flex; align-items: center; gap: 12px; }
+        .logo-icon {
+            width: 44px; height: 44px;
+            background: var(--primary);
+            border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 22px;
+        }
+        .logo h1 {
+            font-size: 22px; font-weight: 700;
+            background: linear-gradient(135deg, var(--primary), var(--accent));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .logo p { font-size: 12px; color: var(--text-dim); }
+        .stats-bar { display: flex; gap: 20px; }
+        .stat-chip {
+            background: var(--card); padding: 8px 16px; border-radius: 8px;
+            font-size: 13px; border: 1px solid var(--border);
+        }
+        .stat-chip span { color: var(--accent); font-weight: 600; }
+
+        .main {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 24px;
+            display: grid;
+            grid-template-columns: 480px 1fr;
+            gap: 24px;
+        }
+
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 24px;
+        }
+        .card-title {
+            font-size: 16px; font-weight: 600; margin-bottom: 20px;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .card-title .icon {
+            width: 28px; height: 28px;
+            background: rgba(108, 99, 255, 0.15);
+            border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 14px;
+        }
+        .card-title .badge-count {
+            margin-left: auto;
+            background: var(--primary);
+            color: white;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+        }
+
+        .form-group { margin-bottom: 14px; }
+        .form-group label {
+            display: block; font-size: 13px; color: var(--text-dim);
+            margin-bottom: 5px; font-weight: 500;
+        }
+        .form-group input, .form-group select, .form-group textarea {
+            width: 100%; padding: 9px 12px;
+            background: var(--bg); border: 1px solid var(--border);
+            border-radius: 10px; color: var(--text); font-size: 13px;
+            transition: border-color 0.2s; font-family: inherit;
+        }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+            outline: none; border-color: var(--primary);
+        }
+        .form-group input::placeholder, .form-group textarea::placeholder { color: #4a4a6a; }
+        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+        .btn {
+            padding: 10px 18px; border: none; border-radius: 10px;
+            font-size: 14px; font-weight: 600; cursor: pointer;
+            transition: all 0.2s; display: flex; align-items: center;
+            justify-content: center; gap: 8px;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary), #8b5cf6); color: white;
+        }
+        .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(108, 99, 255, 0.4); }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+        .btn-preview {
+            background: transparent; color: var(--accent);
+            border: 1px solid var(--accent);
+        }
+        .btn-preview:hover { background: rgba(0, 212, 170, 0.1); }
+        .btn-danger { background: var(--danger); color: white; }
+        .btn-danger:hover { background: #e84040; }
+        .btn-sm { padding: 6px 12px; font-size: 12px; border-radius: 8px; }
+        .btn-group { display: flex; gap: 10px; margin-top: 16px; }
+        .btn-group .btn { flex: 1; }
+
+        .btn-success {
+            background: linear-gradient(135deg, var(--success), #059669); color: white;
+        }
+        .btn-success:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4); }
+        .btn-outline {
+            background: transparent; color: var(--text-dim);
+            border: 1px solid var(--border);
+        }
+        .btn-outline:hover { border-color: var(--primary); color: var(--primary); }
+
+        /* Cookie Slots */
+        .slots-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--bg);
+            padding: 8px;
+        }
+        .slots-grid::-webkit-scrollbar { width: 6px; }
+        .slots-grid::-webkit-scrollbar-track { background: transparent; }
+        .slots-grid::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+        .slot-item {
+            display: flex; align-items: center; gap: 10px;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--card);
+            transition: all 0.15s;
+        }
+        .slot-item:hover { border-color: var(--primary); }
+        .slot-item.selected { border-color: var(--accent); background: rgba(0, 212, 170, 0.06); }
+        .slot-item.has-cookies { border-color: rgba(16, 185, 129, 0.3); }
+
+        .slot-item input[type="checkbox"] {
+            width: 16px; height: 16px; cursor: pointer;
+            accent-color: var(--primary);
+        }
+
+        .slot-num {
+            width: 28px; height: 28px; border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 12px; font-weight: 700; flex-shrink: 0;
+        }
+        .slot-info { flex: 1; min-width: 0; }
+        .slot-name {
+            font-size: 13px; font-weight: 500;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .slot-id {
+            font-size: 11px; color: var(--text-dim);
+            font-family: monospace;
+        }
+        .slot-empty { color: var(--text-dim); font-style: italic; font-size: 12px; }
+
+        .slot-actions { display: flex; gap: 4px; flex-shrink: 0; }
+        .slot-btn {
+            padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px;
+            background: transparent; color: var(--text-dim); cursor: pointer;
+            font-size: 11px; transition: all 0.15s;
+        }
+        .slot-btn:hover { border-color: var(--primary); color: var(--primary); }
+        .slot-btn.del:hover { border-color: var(--danger); color: var(--danger); }
+
+        .acc-status-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .acc-status-dot.idle { background: #4a4a6a; }
+        .acc-status-dot.running { background: var(--warning); animation: pulse 1.5s infinite; }
+        .acc-status-dot.done { background: var(--success); }
+        .acc-status-dot.error { background: var(--danger); }
+
+        /* Cookie Editor Modal */
+        .modal-overlay {
+            display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7); z-index: 1000;
+            align-items: center; justify-content: center;
+        }
+        .modal-overlay.show { display: flex; }
+        .modal {
+            background: var(--card); border: 1px solid var(--border);
+            border-radius: 16px; padding: 28px; width: 540px; max-width: 90vw;
+            max-height: 85vh; overflow-y: auto;
+        }
+        .modal h3 { font-size: 18px; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+        .modal textarea {
+            width: 100%; min-height: 200px; padding: 12px;
+            background: var(--bg); border: 1px solid var(--border);
+            border-radius: 10px; color: var(--text); font-size: 12px;
+            font-family: 'Cascadia Code', 'Fira Code', monospace;
+            resize: vertical;
+        }
+        .modal textarea:focus { outline: none; border-color: var(--primary); }
+        .modal .help-text {
+            font-size: 11.5px; color: var(--text-dim); margin-top: 10px;
+            line-height: 1.7; padding: 12px;
+            background: rgba(108, 99, 255, 0.08);
+            border: 1px solid rgba(108, 99, 255, 0.2);
+            border-radius: 10px;
+        }
+        .modal .help-text b { color: var(--accent); }
+        .modal-btns { display: flex; gap: 10px; margin-top: 16px; }
+        .modal-btns .btn { flex: 1; }
+
+        /* Dynamic slot colors */
+        .slot-color-1 { background: rgba(108,99,255,0.2); color: #8b7fff; }
+        .slot-color-2 { background: rgba(0,212,170,0.2); color: #00d4aa; }
+        .slot-color-3 { background: rgba(245,158,11,0.2); color: #f59e0b; }
+        .slot-color-4 { background: rgba(239,68,68,0.2); color: #ef4444; }
+        .slot-color-5 { background: rgba(168,85,247,0.2); color: #a855f7; }
+        .slot-color-6 { background: rgba(236,72,153,0.2); color: #ec4899; }
+        .slot-color-7 { background: rgba(14,165,233,0.2); color: #0ea5e9; }
+        .slot-color-8 { background: rgba(34,197,94,0.2); color: #22c55e; }
+        .slot-color-9 { background: rgba(251,146,60,0.2); color: #fb923c; }
+        .slot-color-10 { background: rgba(129,140,248,0.2); color: #818cf8; }
+
+        /* Right Panel */
+        .right-panel { display: flex; flex-direction: column; gap: 24px; }
+
+        .progress-bar-container {
+            background: var(--bg); border-radius: 8px; height: 12px; overflow: hidden;
+        }
+        .progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary), var(--accent));
+            border-radius: 8px; transition: width 0.5s ease; width: 0%;
+        }
+        .progress-info {
+            display: flex; justify-content: space-between;
+            margin-top: 8px; font-size: 13px; color: var(--text-dim);
+        }
+        .progress-info .count { color: var(--accent); font-weight: 600; }
+
+        .account-status-bar {
+            display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap;
+        }
+        .acc-status-chip {
+            padding: 5px 12px; border-radius: 6px; font-size: 11px;
+            background: var(--bg); border: 1px solid var(--border);
+        }
+        .acc-status-chip.running { border-color: var(--warning); color: var(--warning); }
+        .acc-status-chip.done { border-color: var(--success); color: var(--success); }
+        .acc-status-chip.error { border-color: var(--danger); color: var(--danger); }
+
+        .log-console {
+            background: #0a0a1a; border: 1px solid var(--border);
+            border-radius: 12px; padding: 16px; height: 420px;
+            overflow-y: auto;
+            font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+            font-size: 12px; line-height: 1.6;
+        }
+        .log-console::-webkit-scrollbar { width: 6px; }
+        .log-console::-webkit-scrollbar-track { background: transparent; }
+        .log-console::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+        .log-line { color: var(--text-dim); }
+        .log-line.success { color: var(--success); }
+        .log-line.error { color: var(--danger); }
+        .log-line.info { color: var(--primary); }
+        .log-line.highlight { color: var(--accent); }
+        .log-line .acc-tag {
+            display: inline-block; padding: 1px 6px; border-radius: 4px;
+            font-size: 10px; font-weight: 600; margin-right: 4px;
+        }
+
+        .preview-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .preview-table th {
+            text-align: left; padding: 10px 12px; background: var(--bg);
+            color: var(--text-dim); font-weight: 500;
+            border-bottom: 1px solid var(--border);
+        }
+        .preview-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+        .preview-table tr:hover td { background: rgba(108, 99, 255, 0.05); }
+        .badge {
+            display: inline-block; padding: 3px 10px; border-radius: 6px;
+            font-size: 11px; font-weight: 500;
+        }
+        .badge-price { background: rgba(16, 185, 129, 0.15); color: var(--success); }
+        .badge-city { background: rgba(108, 99, 255, 0.15); color: var(--primary); }
+        .badge-cond { background: rgba(245, 158, 11, 0.15); color: var(--warning); }
+
+        .status { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+        .status-dot {
+            width: 8px; height: 8px; border-radius: 50%; background: #4a4a6a;
+        }
+        .status-dot.active {
+            background: var(--success); animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+        .loading-spinner {
+            display: inline-block; width: 14px; height: 14px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        @media (max-width: 900px) {
+            .main { grid-template-columns: 1fr; }
+            .header-inner { flex-direction: column; gap: 12px; }
+            .stats-bar { flex-wrap: wrap; justify-content: center; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div class="header-inner">
+        <div class="logo">
+            <div class="logo-icon">M</div>
+            <div>
+                <h1>Marketplace Auto Lister v6</h1>
+                <p>10 Cookie Slots - Backend Saved - Jab Chaaho Update Karo</p>
+            </div>
+        </div>
+        <div class="stats-bar">
+            <div class="stat-chip">Cities: <span id="stat-cities">0</span></div>
+            <div class="stat-chip">Categories: <span id="stat-categories">0</span></div>
+            <div class="stat-chip">IDs Loaded: <span id="stat-accounts">0</span></div>
+            <div class="stat-chip">
+                <div class="status">
+                    <div class="status-dot" id="status-dot"></div>
+                    <span id="status-text">Ready</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="main">
+    <!-- Left Panel -->
+    <div>
+        <!-- Settings Card -->
+        <div class="card" style="margin-bottom: 24px;">
+            <div class="card-title">
+                <div class="icon">S</div>
+                Settings
+            </div>
+
+            <div class="form-group">
+                <label>Images Folder Path</label>
+                <input type="text" id="imageFolder" placeholder="C:\Users\Admin\Downloads\logo_design\images">
+            </div>
+            <div class="form-group">
+                <label>Service Type</label>
+                <input type="text" id="serviceType" value="Professional Service" placeholder="e.g. Logo Design">
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Min Price ($)</label>
+                    <input type="number" id="minPrice" value="250">
+                </div>
+                <div class="form-group">
+                    <label>Max Price ($)</label>
+                    <input type="number" id="maxPrice" value="350">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Delay Between Listings (seconds)</label>
+                <input type="number" id="delay" value="30">
+            </div>
+        </div>
+
+        <!-- Cookie Slots Card -->
+        <div class="card">
+            <div class="card-title">
+                <div class="icon">C</div>
+                Cookie Slots (10 IDs)
+                <span class="badge-count" id="selectedCount">0 selected</span>
+            </div>
+
+            <div style="font-size: 12px; color: var(--text-dim); margin-bottom: 12px; line-height: 1.6;">
+                Har slot me ek Facebook ID ki cookies daal do. Cookies backend me save rehti hain - restart pe bhi.
+                <br>Jab chaaho cookies update karo aur kaam start karo!
+            </div>
+
+            <!-- Toolbar -->
+            <div style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center;">
+                <button class="btn btn-outline btn-sm" onclick="selectAllSlots()">Select All</button>
+                <button class="btn btn-outline btn-sm" onclick="deselectAllSlots()">Deselect All</button>
+                <button class="btn btn-sm" style="background: var(--danger); color: white;" onclick="clearAllSlots()">Clear All</button>
+                <div style="margin-left: auto; font-size: 12px; color: var(--text-dim);">
+                    <span id="filledCount" style="color: var(--accent); font-weight: 600;">0</span>/10 filled,
+                    <span id="selectedCountSmall" style="color: var(--accent); font-weight: 600;">0</span> selected
+                </div>
+            </div>
+
+            <!-- Slots List -->
+            <div class="slots-grid" id="slotsGrid">
+                <!-- Populated by JS -->
+            </div>
+
+            <div class="btn-group" style="margin-top: 20px;">
+                <button class="btn btn-preview" onclick="previewListings()">Preview</button>
+                <button class="btn btn-primary" id="startBtn" onclick="startListing()">Start Listing</button>
+            </div>
+
+            <!-- Open All IDs in Separate Tabs -->
+            <div style="margin-top: 12px; background: linear-gradient(135deg, rgba(0,212,170,0.08), rgba(108,99,255,0.08)); border: 2px solid rgba(0,212,170,0.3); border-radius: 12px; padding: 14px;">
+                <div style="font-size: 14px; font-weight: 700; color: var(--accent); margin-bottom: 8px;">
+                    Open All IDs in Separate Tabs
+                </div>
+                <div style="font-size: 11px; color: var(--text-dim); margin-bottom: 10px; line-height: 1.6;">
+                    Har selected ID ko alag browser tab me open karo.
+                    Har tab apni cookies se Facebook pe login hogi!
+                </div>
+                <div style="display: flex; gap: 8px;">
+                    <button class="btn btn-sm" id="openTabsBtn" onclick="openAllTabs()" style="flex: 1; font-size: 14px; padding: 12px 16px; background: linear-gradient(135deg, var(--accent), #059669); color: #000; border: none; border-radius: 8px; cursor: pointer; font-weight: 700;">
+                        Open All IDs in Tabs
+                    </button>
+                    <button class="btn btn-sm" id="closeTabsBtn" onclick="closeAllTabs()" style="padding: 12px 16px; background: var(--danger); color: #fff; border: none; border-radius: 8px; cursor: pointer; font-weight: 700; display: none;">
+                        Close All Tabs
+                    </button>
+                </div>
+                <div id="tabsResult" style="display: none; font-size: 11px; margin-top: 8px; padding: 8px; border-radius: 6px; line-height: 1.5;"></div>
+            </div>
+
+            <button class="btn btn-danger" id="stopBtn" onclick="stopListing()" style="margin-top:10px; display:none; width:100%;">Stop All</button>
+        </div>
+    </div>
+
+    <!-- Right Panel -->
+    <div class="right-panel">
+        <!-- Progress -->
+        <div class="card">
+            <div class="card-title">
+                <div class="icon">P</div>
+                Progress
+            </div>
+            <div class="progress-bar-container">
+                <div class="progress-bar-fill" id="progressBar"></div>
+            </div>
+            <div class="progress-info">
+                <span>Completed: <span class="count" id="completedCount">0</span> / <span id="totalCount">0</span></span>
+                <span id="progressPercent">0%</span>
+            </div>
+            <div class="account-status-bar" id="accountStatusBar"></div>
+        </div>
+
+        <!-- Log / Preview -->
+        <div class="card" style="flex:1;">
+            <div class="card-title">
+                <div class="icon">L</div>
+                <span id="panelTitle">Live Console</span>
+            </div>
+            <div id="logPanel" class="log-console">
+                <div class="log-line info">Waiting to start...</div>
+                <div class="log-line">Cookie slots me cookies daal ke "Start Listing" dabao</div>
+            </div>
+            <div id="previewPanel" style="display:none; max-height:420px; overflow-y:auto;">
+                <table class="preview-table" id="previewTable">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Title</th>
+                            <th>City</th>
+                            <th>Price</th>
+                            <th>Condition</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Cookie Editor Modal -->
+<div class="modal-overlay" id="cookieModal">
+    <div class="modal">
+        <h3>
+            <span id="modalIcon" class="slot-num slot-color-1">1</span>
+            <span id="modalTitle">Slot 1 - Cookies Daalein</span>
+        </h3>
+        <div class="form-group">
+            <label>Account Name (optional)</label>
+            <input type="text" id="modalName" placeholder="e.g. My FB Account 1">
+        </div>
+        <div class="form-group">
+            <label>Cookies JSON (array paste karo)</label>
+            <textarea id="modalCookies" placeholder='[{"name":"c_user","value":"123456","domain":".facebook.com"},{"name":"xs","value":"abc123","domain":".facebook.com"}]'></textarea>
+        </div>
+        <div class="help-text">
+            <b>Cookies kaise laayein?</b><br>
+            1. Chrome me Facebook open karo aur login karo<br>
+            2. <b>Cookie-Editor</b> extension install karo (Chrome Web Store se)<br>
+            3. Facebook pe ja ke Cookie-Editor icon dabao<br>
+            4. <b>"Export"</b> button dabao (JSON copy hoga)<br>
+            5. Yahan paste karo!<br><br>
+            <b>Ya</b> F12 > Application > Cookies > facebook.com se manually copy karo<br>
+            <b>Important:</b> <b>c_user</b> aur <b>xs</b> cookies zaroori hain login ke liye
+        </div>
+        <div class="modal-btns">
+            <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+            <button class="btn btn-success" onclick="saveCookieSlot()">Save Cookies</button>
+        </div>
+        <input type="hidden" id="modalSlot" value="0">
+    </div>
+</div>
+
+<script>
+    let ws = null;
+    let isRunning = false;
+    let slotsData = []; // Array of {slot, id, name, has_cookies, selected}
+    let editingSlot = 0;
+
+    // Load stats
+    fetch('/api/stats').then(r => r.json()).then(data => {
+        document.getElementById('stat-cities').textContent = data.cities;
+        document.getElementById('stat-categories').textContent = data.categories;
+    });
+
+    // Load slots from backend
+    async function loadSlots() {
+        try {
+            const resp = await fetch('/api/slots');
+            const data = await resp.json();
+            // Preserve selection state
+            const prevSelected = {};
+            slotsData.forEach(s => { prevSelected[s.slot] = s.selected; });
+
+            slotsData = data.slots.map(s => ({
+                ...s,
+                selected: prevSelected[s.slot] !== undefined ? prevSelected[s.slot] : s.has_cookies,
+            }));
+            renderSlots();
+        } catch (e) {
+            console.error('Failed to load slots:', e);
+        }
+    }
+
+    function getSlotColor(slot) {
+        return 'slot-color-' + slot;
+    }
+
+    function renderSlots() {
+        const grid = document.getElementById('slotsGrid');
+        grid.innerHTML = '';
+
+        slotsData.forEach(slot => {
+            const div = document.createElement('div');
+            div.className = 'slot-item' + (slot.selected ? ' selected' : '') + (slot.has_cookies ? ' has-cookies' : '');
+
+            const colorClass = getSlotColor(slot.slot);
+            const shortId = slot.id ? (slot.id.length > 12 ? slot.id.substring(0, 12) + '..' : slot.id) : '';
+
+            div.innerHTML = `
+                <input type="checkbox" ${slot.selected && slot.has_cookies ? 'checked' : ''} 
+                    ${!slot.has_cookies ? 'disabled' : ''}
+                    onchange="toggleSlot(${slot.slot}, this.checked); event.stopPropagation();">
+                <div class="slot-num ${colorClass}">${slot.slot}</div>
+                <div class="slot-info">
+                    ${slot.has_cookies ? `
+                        <div class="slot-name">${escapeHtml(slot.name || 'FB Account')}</div>
+                        <div class="slot-id">${shortId ? 'ID: ' + shortId : ''}</div>
+                    ` : `
+                        <div class="slot-empty">Empty - Click "Edit" to add cookies</div>
+                    `}
+                </div>
+                <div class="slot-actions">
+                    <button class="slot-btn" onclick="openModal(${slot.slot}); event.stopPropagation();">
+                        ${slot.has_cookies ? 'Edit' : 'Add'}
+                    </button>
+                    ${slot.has_cookies ? `
+                        <button class="slot-btn del" onclick="deleteSlot(${slot.slot}); event.stopPropagation();">Del</button>
+                    ` : ''}
+                </div>
+                <div class="acc-status-dot idle" id="acc-dot-${slot.slot}"></div>
+            `;
+            grid.appendChild(div);
+        });
+
+        updateCounts();
+    }
+
+    function updateCounts() {
+        const filled = slotsData.filter(s => s.has_cookies).length;
+        const selected = slotsData.filter(s => s.selected && s.has_cookies).length;
+        document.getElementById('filledCount').textContent = filled;
+        document.getElementById('selectedCountSmall').textContent = selected;
+        document.getElementById('selectedCount').textContent = selected + ' selected';
+        document.getElementById('stat-accounts').textContent = filled;
+    }
+
+    function toggleSlot(slot, checked) {
+        const s = slotsData.find(s => s.slot === slot);
+        if (s) s.selected = checked;
+        renderSlots();
+    }
+
+    function selectAllSlots() {
+        slotsData.forEach(s => { if (s.has_cookies) s.selected = true; });
+        renderSlots();
+    }
+
+    function deselectAllSlots() {
+        slotsData.forEach(s => s.selected = false);
+        renderSlots();
+    }
+
+    async function clearAllSlots() {
+        const filled = slotsData.filter(s => s.has_cookies).length;
+        if (filled === 0) { alert('Koi cookies saved nahi hain!'); return; }
+        if (!confirm(`Kya aap sab ${filled} saved cookies delete karna chahte ho? Ye action undo nahi hoga!`)) return;
+        const resp = await fetch('/api/slots', { method: 'DELETE' });
+        const data = await resp.json();
+        if (data.status === 'cleared') {
+            alert(`${data.deleted} slot(s) clear ho gaye!`);
+            loadSlots();
+        }
+    }
+
+    // Modal
+    function openModal(slot) {
+        editingSlot = slot;
+        const s = slotsData.find(s => s.slot === slot);
+        document.getElementById('modalSlot').value = slot;
+        document.getElementById('modalTitle').textContent = `Slot ${slot} - Cookies ${s && s.has_cookies ? 'Update' : 'Add'} Karo`;
+        document.getElementById('modalIcon').textContent = slot;
+        document.getElementById('modalIcon').className = 'slot-num ' + getSlotColor(slot);
+        document.getElementById('modalName').value = s ? (s.name || '') : '';
+
+        // Load existing cookies if any
+        if (s && s.has_cookies) {
+            fetch(`/api/slots/${slot}`).then(r => r.json()).then(data => {
+                if (data.data && data.data.cookies) {
+                    document.getElementById('modalCookies').value = JSON.stringify(data.data.cookies, null, 2);
+                }
+            });
+        } else {
+            document.getElementById('modalCookies').value = '';
+        }
+
+        document.getElementById('cookieModal').classList.add('show');
+    }
+
+    function closeModal() {
+        document.getElementById('cookieModal').classList.remove('show');
+    }
+
+    async function saveCookieSlot() {
+        const slot = parseInt(document.getElementById('modalSlot').value);
+        const name = document.getElementById('modalName').value.trim();
+        const cookiesText = document.getElementById('modalCookies').value.trim();
+
+        if (!cookiesText) {
+            alert('Cookies JSON paste karo!');
+            return;
+        }
+
+        try {
+            JSON.parse(cookiesText);
+        } catch (e) {
+            alert('Invalid JSON! Sahi format me cookies paste karo.\nError: ' + e.message);
+            return;
+        }
+
+        try {
+            const resp = await fetch(`/api/slots/${slot}`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ slot, cookies_json: cookiesText, name }),
+            });
+            const data = await resp.json();
+
+            if (data.error) {
+                alert('Error: ' + data.error);
+                return;
+            }
+
+            closeModal();
+            await loadSlots();
+
+            // Auto-select the saved slot
+            const s = slotsData.find(s => s.slot === slot);
+            if (s) s.selected = true;
+            renderSlots();
+
+        } catch (e) {
+            alert('Save failed: ' + e.message);
+        }
+    }
+
+    async function deleteSlot(slot) {
+        if (!confirm(`Slot ${slot} ki cookies delete kar dein?`)) return;
+        try {
+            await fetch(`/api/slots/${slot}`, { method: 'DELETE' });
+            await loadSlots();
+        } catch (e) {
+            alert('Delete failed: ' + e.message);
+        }
+    }
+
+    // Get selected accounts for API calls
+    async function getSelectedAccounts() {
+        const selected = slotsData.filter(s => s.selected && s.has_cookies);
+        const accounts = [];
+
+        for (const s of selected) {
+            try {
+                const resp = await fetch(`/api/slots/${s.slot}`);
+                const data = await resp.json();
+                if (data.data && data.data.cookies) {
+                    accounts.push({
+                        cookies_json: JSON.stringify(data.data.cookies),
+                        account_id: data.data.id || String(s.slot),
+                        account_name: data.data.name || `Slot ${s.slot}`,
+                    });
+                }
+            } catch (e) {
+                console.error(`Failed to load slot ${s.slot}:`, e);
+            }
+        }
+        return accounts;
+    }
+
+    function getConfig() {
+        return {
+            image_folder: document.getElementById('imageFolder').value,
+            service_type: document.getElementById('serviceType').value,
+            min_price: parseInt(document.getElementById('minPrice').value) || 250,
+            max_price: parseInt(document.getElementById('maxPrice').value) || 350,
+            delay_between: parseInt(document.getElementById('delay').value) || 30,
+        };
+    }
+
+    // ── Open All IDs in Tabs ──────────────────────────────
+
+    async function openAllTabs() {
+        const accounts = await getSelectedAccounts();
+        if (accounts.length === 0) {
+            alert('Pehle cookie slots me cookies daal ke select karo!');
+            return;
+        }
+
+        const btn = document.getElementById('openTabsBtn');
+        const closeBtn = document.getElementById('closeTabsBtn');
+        const resultDiv = document.getElementById('tabsResult');
+
+        btn.disabled = true;
+        btn.innerHTML = '<span class="loading-spinner"></span> Tabs open ho rahi hain...';
+        resultDiv.style.display = 'block';
+        resultDiv.style.background = 'rgba(0,212,170,0.1)';
+        resultDiv.style.color = 'var(--accent)';
+        resultDiv.textContent = `${accounts.length} accounts ke liye browser tabs open ho rahi hain...`;
+
+        try {
+            const resp = await fetch('/api/open-tabs', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ accounts }),
+            });
+            const data = await resp.json();
+
+            if (data.error) {
+                resultDiv.style.background = 'rgba(255,50,50,0.1)';
+                resultDiv.style.color = '#f55';
+                resultDiv.textContent = data.error;
+                btn.disabled = false;
+                btn.innerHTML = 'Open All IDs in Tabs';
+                return;
+            }
+
+            resultDiv.style.background = 'rgba(0,200,100,0.1)';
+            resultDiv.style.color = '#0c6';
+            resultDiv.innerHTML = `<b>${data.count} tabs open ho rahi hain!</b><br>Har ID alag browser window me Facebook pe login hogi.<br>Thoda wait karo...`;
+            closeBtn.style.display = 'block';
+
+            setTimeout(async () => {
+                try {
+                    const statusResp = await fetch('/api/tabs-status');
+                    const statusData = await statusResp.json();
+                    if (statusData.tabs && statusData.tabs.length > 0) {
+                        let html = `<b>${statusData.total} tabs open hain:</b><br>`;
+                        statusData.tabs.forEach(tab => {
+                            const icon = tab.logged_in ? '<span style="color:#0c6;">Logged In</span>' : '<span style="color:#f55;">Login Failed</span>';
+                            html += `<b>${tab.name}</b> (${tab.id}) - ${icon}<br>`;
+                        });
+                        resultDiv.innerHTML = html;
+                    }
+                } catch(e) {}
+            }, 15000);
+
+        } catch (e) {
+            resultDiv.style.background = 'rgba(255,50,50,0.1)';
+            resultDiv.style.color = '#f55';
+            resultDiv.textContent = 'Error: ' + e.message;
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = 'Open All IDs in Tabs';
+        }
+    }
+
+    async function closeAllTabs() {
+        const btn = document.getElementById('closeTabsBtn');
+        const resultDiv = document.getElementById('tabsResult');
+
+        btn.disabled = true;
+        btn.innerHTML = 'Closing...';
+
+        try {
+            const resp = await fetch('/api/close-tabs', { method: 'POST' });
+            const data = await resp.json();
+
+            if (data.error) {
+                alert('Error: ' + data.error);
+            } else {
+                resultDiv.style.background = 'rgba(108,99,255,0.1)';
+                resultDiv.style.color = 'var(--primary)';
+                resultDiv.textContent = 'Sab tabs band ho gayi!';
+                setTimeout(() => { resultDiv.style.display = 'none'; }, 3000);
+            }
+        } catch (e) {
+            alert('Error: ' + e.message);
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = 'Close All Tabs';
+            btn.style.display = 'none';
+        }
+    }
+
+    // ── WebSocket ───────────────────────────────────────
+
+    function connectWS() {
+        const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        ws = new WebSocket(`${protocol}//${location.host}/ws`);
+        
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            
+            if (data.type === 'init') {
+                if (data.state.running) setRunning(true);
+                data.logs.forEach(msg => addLog(msg));
+                updateProgress(data.state);
+            }
+            else if (data.type === 'log') {
+                addLog(data.message);
+                updateProgress(data.state);
+            }
+            else if (data.type === 'done') {
+                setRunning(false);
+            }
+            else if (data.type === 'tabs_opened') {
+                const resultDiv = document.getElementById('tabsResult');
+                if (resultDiv) {
+                    let html = `<b>${data.total} tabs open hain!</b> (${data.logged_in} logged in)<br>`;
+                    if (data.results) {
+                        data.results.forEach(r => {
+                            const icon = r.status === 'logged_in' ? '<span style="color:#0c6;">Logged In</span>' : '<span style="color:#f55;">' + r.status + '</span>';
+                            html += `<b>${r.name}</b> (${r.id}) - ${icon}<br>`;
+                        });
+                    }
+                    resultDiv.style.display = 'block';
+                    resultDiv.style.background = 'rgba(0,200,100,0.1)';
+                    resultDiv.style.color = '#0c6';
+                    resultDiv.innerHTML = html;
+                    document.getElementById('closeTabsBtn').style.display = 'block';
+                }
+            }
+            else if (data.type === 'tabs_error') {
+                const resultDiv = document.getElementById('tabsResult');
+                if (resultDiv) {
+                    resultDiv.style.display = 'block';
+                    resultDiv.style.background = 'rgba(255,50,50,0.1)';
+                    resultDiv.style.color = '#f55';
+                    resultDiv.textContent = 'Error: ' + (data.error || 'Unknown error');
+                }
+            }
+        };
+        
+        ws.onclose = () => setTimeout(connectWS, 2000);
+    }
+    connectWS();
+
+    function addLog(msg) {
+        const panel = document.getElementById('logPanel');
+        const div = document.createElement('div');
+        div.className = 'log-line';
+        
+        if (msg.includes('ERROR') || msg.includes('FAIL') || msg.includes('failed')) div.className += ' error';
+        else if (msg.includes('Posted:') || msg.includes('COMPLETE') || msg.includes('successful') || msg.includes('complete')) div.className += ' success';
+        else if (msg.includes('--') || msg.includes('===')) div.className += ' highlight';
+        else if (msg.includes('Found') || msg.includes('Launching') || msg.includes('Active')) div.className += ' info';
+        
+        const accMatch = msg.match(/\[Account (\d+)\]/);
+        if (accMatch) {
+            const accNum = parseInt(accMatch[1]);
+            const colorClass = getSlotColor(accNum);
+            const tag = `<span class="acc-tag ${colorClass}">ID ${accNum}</span>`;
+            msg = msg.replace(`[Account ${accNum}] `, '');
+            div.innerHTML = tag + escapeHtml(msg);
+        } else {
+            div.textContent = msg;
+        }
+        
+        panel.appendChild(div);
+        panel.scrollTop = panel.scrollHeight;
+    }
+
+    function escapeHtml(text) {
+        const d = document.createElement('div');
+        d.textContent = text;
+        return d.innerHTML;
+    }
+
+    function updateProgress(state) {
+        const pct = state.total > 0 ? Math.round((state.completed / state.total) * 100) : 0;
+        document.getElementById('progressBar').style.width = pct + '%';
+        document.getElementById('completedCount').textContent = state.completed;
+        document.getElementById('totalCount').textContent = state.total;
+        document.getElementById('progressPercent').textContent = pct + '%';
+        
+        if (state.accounts) {
+            const bar = document.getElementById('accountStatusBar');
+            bar.innerHTML = '';
+            for (const [id, acc] of Object.entries(state.accounts)) {
+                const chip = document.createElement('span');
+                chip.className = 'acc-status-chip';
+                if (acc.status === 'running' || acc.status === 'starting') chip.classList.add('running');
+                else if (acc.status === 'done') chip.classList.add('done');
+                else if (acc.status === 'error' || acc.status === 'login_failed') chip.classList.add('error');
+                
+                const completed = acc.completed || 0;
+                const total = acc.total || 0;
+                chip.textContent = `ID ${id}: ${acc.status} (${completed}/${total})`;
+                bar.appendChild(chip);
+
+                const dot = document.getElementById('acc-dot-' + id);
+                if (dot) {
+                    dot.className = 'acc-status-dot';
+                    if (acc.status === 'running' || acc.status === 'starting') dot.classList.add('running');
+                    else if (acc.status === 'done') dot.classList.add('done');
+                    else if (acc.status === 'error' || acc.status === 'login_failed') dot.classList.add('error');
+                    else dot.classList.add('idle');
+                }
+            }
+        }
+    }
+
+    function setRunning(running) {
+        isRunning = running;
+        document.getElementById('startBtn').disabled = running;
+        document.getElementById('stopBtn').style.display = running ? 'block' : 'none';
+        document.getElementById('status-dot').className = running ? 'status-dot active' : 'status-dot';
+        document.getElementById('status-text').textContent = running ? 'Running' : 'Ready';
+        
+        if (running) {
+            document.getElementById('logPanel').style.display = 'block';
+            document.getElementById('previewPanel').style.display = 'none';
+            document.getElementById('panelTitle').textContent = 'Live Console';
+        }
+    }
+
+    async function previewListings() {
+        const config = getConfig();
+        if (!config.image_folder) { alert('Image folder path dalo!'); return; }
+
+        const accounts = await getSelectedAccounts();
+        config.accounts = accounts;
+
+        const resp = await fetch('/api/preview', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(config),
+        });
+        const data = await resp.json();
+        if (data.error) { alert(data.error); return; }
+
+        document.getElementById('logPanel').style.display = 'none';
+        document.getElementById('previewPanel').style.display = 'block';
+        document.getElementById('panelTitle').textContent = `Preview (${data.total_images} images total)`;
+
+        const tbody = document.querySelector('#previewTable tbody');
+        tbody.innerHTML = '';
+        data.listings.forEach(l => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>${l.number}</td>
+                <td>${l.title}</td>
+                <td><span class="badge badge-city">${l.city}</span></td>
+                <td><span class="badge badge-price">$${l.price}</span></td>
+                <td><span class="badge badge-cond">${l.condition}</span></td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    async function startListing() {
+        const config = getConfig();
+        if (!config.image_folder) { alert('Image folder path dalo!'); return; }
+
+        const accounts = await getSelectedAccounts();
+        if (accounts.length === 0) {
+            alert('Kam se kam 1 cookie slot select karo! Pehle cookies daal ke checkbox se select karo.');
+            return;
+        }
+        config.accounts = accounts;
+
+        document.getElementById('logPanel').innerHTML = '';
+        document.getElementById('logPanel').style.display = 'block';
+        document.getElementById('previewPanel').style.display = 'none';
+        document.getElementById('panelTitle').textContent = 'Live Console';
+
+        const resp = await fetch('/api/start', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(config),
+        });
+        const data = await resp.json();
+        if (data.error) { alert(data.error); return; }
+        setRunning(true);
+    }
+
+    async function stopListing() {
+        await fetch('/api/stop', { method: 'POST' });
+    }
+
+    // Close modal on overlay click
+    document.getElementById('cookieModal').addEventListener('click', function(e) {
+        if (e.target === this) closeModal();
+    });
+
+    // Check tabs status on load
+    async function checkTabsStatus() {
+        try {
+            const resp = await fetch('/api/tabs-status');
+            const data = await resp.json();
+            if (data.running && data.total > 0) {
+                document.getElementById('closeTabsBtn').style.display = 'block';
+            }
+        } catch(e) {}
+    }
+
+    // Initialize
+    loadSlots();
+    checkTabsStatus();
+</script>
+
+</body>
+</html>
