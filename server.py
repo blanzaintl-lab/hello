@@ -1,11 +1,14 @@
 """
-Facebook Marketplace Auto Lister v6
+Facebook Marketplace Auto Lister v7
 ====================================
-- 10 Cookie Slots (backend me save, jab chaaho update karo)
-- Sirf cookies se login (no email/password, no SessionBox, no Chrome scan)
-- Persistent cookies folder - cookies delete nahi hoti restart pe
-- ALL American cities (270+) with random rotation
-- Random categories, conditions, prices
+- 5 Profile Slots with dedicated proxy IPs per profile
+- Cookie-based login (no email/password)
+- Human-like behavior: scrolling, random likes, news feed browsing
+- Smart scheduling: 1 listing per hour, max 3 per 24 hours per profile
+- City-specific listings: each profile lists in its assigned region only
+- Heavy browsing between listings to appear natural
+- Browser history building for each profile
+- Persistent cookies and profiles
 
 Usage:
     python server.py
@@ -22,6 +25,7 @@ import os
 import random
 import re
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -36,8 +40,14 @@ from pydantic import BaseModel
 BASE_DIR = Path(__file__).parent
 COOKIES_DIR = BASE_DIR / "cookies"
 COOKIES_DIR.mkdir(exist_ok=True)
+PROFILES_DIR = BASE_DIR / "browser_profiles"
+PROFILES_DIR.mkdir(exist_ok=True)
+SCHEDULE_DIR = BASE_DIR / "data"
+SCHEDULE_DIR.mkdir(exist_ok=True)
 
-MAX_SLOTS = 10
+MAX_SLOTS = 5
+MAX_LISTINGS_PER_DAY = 3
+LISTING_INTERVAL_MINUTES = 60
 
 with open(BASE_DIR / "data" / "cities.json", "r") as f:
     ALL_CITIES = json.load(f)
@@ -45,7 +55,49 @@ with open(BASE_DIR / "data" / "cities.json", "r") as f:
 with open(BASE_DIR / "data" / "categories.json", "r") as f:
     ALL_CATEGORIES = json.load(f)
 
+with open(BASE_DIR / "data" / "city_groups.json", "r") as f:
+    CITY_GROUPS = json.load(f)
+
 CONDITIONS = ["New", "Used - Like New", "Used - Good", "Used - Fair"]
+
+# ── Browsing URLs for human behavior ─────────────────────────────
+
+BROWSE_URLS = [
+    "https://www.facebook.com/",
+    "https://www.facebook.com/marketplace/",
+    "https://www.facebook.com/watch/",
+    "https://www.facebook.com/groups/feed/",
+    "https://www.facebook.com/news",
+    "https://www.facebook.com/gaming/",
+    "https://www.facebook.com/events/",
+]
+
+SEARCH_TERMS = [
+    "furniture near me", "used cars", "electronics for sale",
+    "free stuff", "apartment for rent", "bikes for sale",
+    "iphone", "laptop deals", "couch", "desk for sale",
+    "garden tools", "pet supplies", "kitchen appliances",
+    "gaming console", "books", "clothing", "shoes",
+    "home decor", "fitness equipment", "musical instruments",
+]
+
+HISTORY_URLS = [
+    "https://www.google.com/search?q=weather+today",
+    "https://www.google.com/search?q=news+today",
+    "https://www.google.com/search?q=sports+scores",
+    "https://www.google.com/search?q=recipes",
+    "https://www.google.com/search?q=movie+reviews",
+    "https://www.youtube.com/",
+    "https://www.reddit.com/",
+    "https://www.amazon.com/",
+    "https://www.wikipedia.org/",
+    "https://www.ebay.com/",
+    "https://www.craigslist.org/",
+    "https://www.google.com/maps",
+    "https://www.yelp.com/",
+    "https://www.linkedin.com/",
+    "https://www.instagram.com/",
+]
 
 # ── Description Templates ─────────────────────────────────────────
 
@@ -79,10 +131,18 @@ def extract_title_from_filename(filename: str) -> str:
     return name.strip()
 
 
-# ── Cookie Slot Management ────────────────────────────────────────
+# ── Profile & Cookie Management ───────────────────────────────────
 
 def get_cookie_file(slot: int) -> Path:
     return COOKIES_DIR / f"slot_{slot}.json"
+
+
+def get_profile_config_file(slot: int) -> Path:
+    return COOKIES_DIR / f"profile_{slot}_config.json"
+
+
+def get_schedule_file(slot: int) -> Path:
+    return SCHEDULE_DIR / f"schedule_{slot}.json"
 
 
 def load_slot(slot: int) -> dict | None:
@@ -106,16 +166,90 @@ def delete_slot(slot: int):
     fpath = get_cookie_file(slot)
     if fpath.exists():
         fpath.unlink()
+    cfg = get_profile_config_file(slot)
+    if cfg.exists():
+        cfg.unlink()
+
+
+def load_profile_config(slot: int) -> dict:
+    fpath = get_profile_config_file(slot)
+    defaults = {
+        "proxy": "",
+        "city_group": "",
+        "enabled": False,
+    }
+    if not fpath.exists():
+        return defaults
+    try:
+        with open(fpath, "r", encoding="utf-8") as f:
+            saved = json.load(f)
+            defaults.update(saved)
+            return defaults
+    except (json.JSONDecodeError, OSError):
+        return defaults
+
+
+def save_profile_config(slot: int, config: dict):
+    fpath = get_profile_config_file(slot)
+    with open(fpath, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+
+
+def load_schedule(slot: int) -> dict:
+    fpath = get_schedule_file(slot)
+    defaults = {
+        "listings_today": 0,
+        "last_listing_time": None,
+        "last_reset_date": None,
+        "history": [],
+    }
+    if not fpath.exists():
+        return defaults
+    try:
+        with open(fpath, "r", encoding="utf-8") as f:
+            saved = json.load(f)
+            defaults.update(saved)
+            return defaults
+    except (json.JSONDecodeError, OSError):
+        return defaults
+
+
+def save_schedule(slot: int, schedule: dict):
+    fpath = get_schedule_file(slot)
+    with open(fpath, "w", encoding="utf-8") as f:
+        json.dump(schedule, f, indent=2, ensure_ascii=False)
 
 
 def get_all_slots() -> list[dict]:
     slots = []
     for i in range(1, MAX_SLOTS + 1):
         data = load_slot(i)
+        config = load_profile_config(i)
+        schedule = load_schedule(i)
         if data:
-            slots.append({"slot": i, "id": data.get("id", ""), "name": data.get("name", ""), "has_cookies": True})
+            slots.append({
+                "slot": i,
+                "id": data.get("id", ""),
+                "name": data.get("name", ""),
+                "has_cookies": True,
+                "proxy": config.get("proxy", ""),
+                "city_group": config.get("city_group", ""),
+                "enabled": config.get("enabled", False),
+                "listings_today": schedule.get("listings_today", 0),
+                "last_listing_time": schedule.get("last_listing_time"),
+            })
         else:
-            slots.append({"slot": i, "id": "", "name": "", "has_cookies": False})
+            slots.append({
+                "slot": i,
+                "id": "",
+                "name": "",
+                "has_cookies": False,
+                "proxy": config.get("proxy", ""),
+                "city_group": config.get("city_group", ""),
+                "enabled": False,
+                "listings_today": 0,
+                "last_listing_time": None,
+            })
     return slots
 
 
@@ -128,7 +262,7 @@ def extract_fb_id_from_cookies(cookies: list[dict]) -> str:
 
 # ── App ───────────────────────────────────────────────────────────
 
-app = FastAPI(title="FB Marketplace Auto Lister v6")
+app = FastAPI(title="FB Marketplace Auto Lister v7")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -139,39 +273,13 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 # Global state
-listing_state = {
+scheduler_state = {
     "running": False,
-    "total": 0,
-    "completed": 0,
-    "current": "",
+    "profiles": {},
     "logs": [],
-    "error": "",
-    "accounts": {},
+    "start_time": None,
 }
 connected_clients: list[WebSocket] = []
-
-# Global state for open browser tabs
-open_tabs_state = {
-    "browser": None,
-    "playwright_instance": None,
-    "pages": {},
-    "running": False,
-}
-
-
-class AccountConfig(BaseModel):
-    cookies_json: str = ""
-    account_id: str = ""
-    account_name: str = ""
-
-
-class ListingConfig(BaseModel):
-    image_folder: str
-    service_type: str = "Professional Service"
-    min_price: int = 250
-    max_price: int = 350
-    delay_between: int = 30
-    accounts: list[AccountConfig] = []
 
 
 class SaveCookieRequest(BaseModel):
@@ -180,34 +288,48 @@ class SaveCookieRequest(BaseModel):
     name: str = ""
 
 
+class ProfileConfigRequest(BaseModel):
+    slot: int
+    proxy: str = ""
+    city_group: str = ""
+    enabled: bool = False
+
+
+class SchedulerStartRequest(BaseModel):
+    image_folder: str
+    service_type: str = "Professional Service"
+    min_price: int = 250
+    max_price: int = 350
+
+
 async def broadcast(data: dict):
     dead = []
     for ws in connected_clients:
         try:
             await ws.send_json(data)
-        except:
+        except Exception:
             dead.append(ws)
     for ws in dead:
         connected_clients.remove(ws)
 
 
-async def log(msg: str, account_id: str = ""):
+async def log(msg: str, profile_id: str = ""):
     timestamp = time.strftime("%H:%M:%S")
-    prefix = f"[Account {account_id}] " if account_id else ""
+    prefix = f"[Profile {profile_id}] " if profile_id else ""
     entry = f"[{timestamp}] {prefix}{msg}"
-    listing_state["logs"].append(entry)
-    if len(listing_state["logs"]) > 1000:
-        listing_state["logs"] = listing_state["logs"][-1000:]
+    scheduler_state["logs"].append(entry)
+    if len(scheduler_state["logs"]) > 2000:
+        scheduler_state["logs"] = scheduler_state["logs"][-2000:]
     await broadcast({
         "type": "log",
         "message": entry,
-        "account_id": account_id,
+        "profile_id": profile_id,
         "state": {
-            "running": listing_state["running"],
-            "total": listing_state["total"],
-            "completed": listing_state["completed"],
-            "current": listing_state["current"],
-            "accounts": listing_state["accounts"],
+            "running": scheduler_state["running"],
+            "profiles": {
+                k: {key: val for key, val in v.items() if key != "page" and key != "context" and key != "browser"}
+                for k, v in scheduler_state["profiles"].items()
+            },
         }
     })
 
@@ -223,6 +345,8 @@ def get_image_files(folder: str) -> list[Path]:
             images.append(f)
     return images
 
+
+# ── Stealth & Browser Setup ──────────────────────────────────────
 
 STEALTH_JS = """
     Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
@@ -252,7 +376,7 @@ async def handle_cookie_consent(page):
                 await btn.click()
                 await asyncio.sleep(1)
                 break
-    except:
+    except Exception:
         pass
 
 
@@ -272,16 +396,16 @@ async def check_logged_in(page) -> bool:
             login_form = page.locator('input#email, input#pass, form#login_form').first
             if await login_form.count() == 0:
                 return True
-    except:
+    except Exception:
         pass
     return False
 
 
-async def login_with_cookies(context, page, cookies_json: str, acc_id: str) -> bool:
+async def login_with_cookies(context, page, cookies_json: str, profile_id: str) -> bool:
     try:
         cookies = json.loads(cookies_json)
         if not isinstance(cookies, list):
-            await log("ERROR: Cookies format galat hai - list honi chahiye", acc_id)
+            await log("ERROR: Cookies format galat hai - list honi chahiye", profile_id)
             return False
 
         clean_cookies = []
@@ -310,10 +434,10 @@ async def login_with_cookies(context, page, cookies_json: str, acc_id: str) -> b
             clean_cookies.append(c)
 
         if not clean_cookies:
-            await log("ERROR: Koi valid cookie nahi mili", acc_id)
+            await log("ERROR: Koi valid cookie nahi mili", profile_id)
             return False
 
-        await log(f"Adding {len(clean_cookies)} cookies...", acc_id)
+        await log(f"Adding {len(clean_cookies)} cookies...", profile_id)
         await context.add_cookies(clean_cookies)
         await asyncio.sleep(1)
 
@@ -322,21 +446,222 @@ async def login_with_cookies(context, page, cookies_json: str, acc_id: str) -> b
         await handle_cookie_consent(page)
 
         if await check_logged_in(page):
-            await log("Cookie login successful!", acc_id)
+            await log("Cookie login successful!", profile_id)
             return True
         else:
-            await log("ERROR: Cookie login failed - cookies expired ho gayi hain", acc_id)
+            await log("ERROR: Cookie login failed - cookies expired ho gayi hain", profile_id)
             return False
 
     except json.JSONDecodeError:
-        await log("ERROR: Cookies JSON parse nahi ho raha - format check karo", acc_id)
+        await log("ERROR: Cookies JSON parse nahi ho raha - format check karo", profile_id)
         return False
     except Exception as e:
-        await log(f"ERROR: Cookie login error: {str(e)[:60]}", acc_id)
+        await log(f"ERROR: Cookie login error: {str(e)[:60]}", profile_id)
         return False
 
 
-async def scan_page_elements(page, acc_id: str):
+# ── Human Behavior Simulator ─────────────────────────────────────
+
+class HumanBehavior:
+    """Simulates human-like Facebook activity to appear natural."""
+
+    def __init__(self, page, profile_id: str):
+        self.page = page
+        self.profile_id = profile_id
+
+    async def random_delay(self, min_sec: float = 1.0, max_sec: float = 4.0):
+        delay = random.uniform(min_sec, max_sec)
+        await asyncio.sleep(delay)
+
+    async def human_scroll(self, scroll_count: int = None):
+        if scroll_count is None:
+            scroll_count = random.randint(3, 12)
+        await log(f"  Scrolling feed ({scroll_count} scrolls)...", self.profile_id)
+        for i in range(scroll_count):
+            scroll_amount = random.randint(200, 600)
+            await self.page.evaluate(f"window.scrollBy(0, {scroll_amount})")
+            await asyncio.sleep(random.uniform(1.5, 4.0))
+
+            if random.random() < 0.3:
+                await asyncio.sleep(random.uniform(2.0, 6.0))
+
+            if random.random() < 0.15:
+                scroll_up = random.randint(50, 200)
+                await self.page.evaluate(f"window.scrollBy(0, -{scroll_up})")
+                await asyncio.sleep(random.uniform(0.5, 1.5))
+
+    async def random_like_posts(self, max_likes: int = None):
+        if max_likes is None:
+            max_likes = random.randint(1, 4)
+        await log(f"  Looking for posts to like (max {max_likes})...", self.profile_id)
+        likes_done = 0
+        try:
+            like_buttons = self.page.locator(
+                'div[aria-label="Like"], '
+                'div[aria-label="like"], '
+                'span[aria-label="Like"]'
+            )
+            count = await like_buttons.count()
+            if count == 0:
+                return
+
+            indices = list(range(count))
+            random.shuffle(indices)
+
+            for idx in indices[:max_likes]:
+                try:
+                    btn = like_buttons.nth(idx)
+                    if await btn.is_visible():
+                        await btn.scroll_into_view_if_needed()
+                        await asyncio.sleep(random.uniform(0.5, 1.5))
+                        await btn.click()
+                        likes_done += 1
+                        await asyncio.sleep(random.uniform(1.0, 3.0))
+                except Exception:
+                    continue
+
+            if likes_done > 0:
+                await log(f"  Liked {likes_done} posts", self.profile_id)
+        except Exception:
+            pass
+
+    async def browse_news_feed(self, duration_minutes: float = None):
+        if duration_minutes is None:
+            duration_minutes = random.uniform(2, 8)
+        await log(f"  Browsing news feed for ~{duration_minutes:.1f} min...", self.profile_id)
+
+        try:
+            await self.page.goto("https://www.facebook.com/", wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(random.uniform(2, 4))
+            await handle_cookie_consent(self.page)
+
+            end_time = time.time() + (duration_minutes * 60)
+            while time.time() < end_time and scheduler_state["running"]:
+                action = random.choice(["scroll", "scroll", "scroll", "pause", "like"])
+                if action == "scroll":
+                    scroll_amount = random.randint(200, 500)
+                    await self.page.evaluate(f"window.scrollBy(0, {scroll_amount})")
+                    await asyncio.sleep(random.uniform(2.0, 5.0))
+                elif action == "pause":
+                    await asyncio.sleep(random.uniform(3.0, 10.0))
+                elif action == "like":
+                    await self.random_like_posts(max_likes=1)
+
+        except Exception as e:
+            await log(f"  News feed browse error: {str(e)[:50]}", self.profile_id)
+
+    async def browse_marketplace(self, duration_minutes: float = None):
+        if duration_minutes is None:
+            duration_minutes = random.uniform(2, 5)
+        await log(f"  Browsing marketplace for ~{duration_minutes:.1f} min...", self.profile_id)
+
+        try:
+            await self.page.goto("https://www.facebook.com/marketplace/", wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(random.uniform(2, 4))
+
+            end_time = time.time() + (duration_minutes * 60)
+            while time.time() < end_time and scheduler_state["running"]:
+                action = random.choice(["scroll", "scroll", "click_item", "search", "pause"])
+                if action == "scroll":
+                    scroll_amount = random.randint(200, 500)
+                    await self.page.evaluate(f"window.scrollBy(0, {scroll_amount})")
+                    await asyncio.sleep(random.uniform(2.0, 5.0))
+                elif action == "click_item":
+                    await self._click_random_marketplace_item()
+                elif action == "search":
+                    await self._search_marketplace()
+                elif action == "pause":
+                    await asyncio.sleep(random.uniform(3.0, 8.0))
+
+        except Exception as e:
+            await log(f"  Marketplace browse error: {str(e)[:50]}", self.profile_id)
+
+    async def _click_random_marketplace_item(self):
+        try:
+            items = self.page.locator('a[href*="/marketplace/item/"]')
+            count = await items.count()
+            if count > 0:
+                idx = random.randint(0, min(count - 1, 10))
+                item = items.nth(idx)
+                if await item.is_visible():
+                    await item.click()
+                    await asyncio.sleep(random.uniform(3, 8))
+                    await self.human_scroll(scroll_count=random.randint(1, 3))
+                    await self.page.go_back()
+                    await asyncio.sleep(random.uniform(1, 3))
+        except Exception:
+            pass
+
+    async def _search_marketplace(self):
+        try:
+            search_term = random.choice(SEARCH_TERMS)
+            search_input = self.page.locator('input[type="search"], input[aria-label*="Search"]').first
+            if await search_input.count() > 0 and await search_input.is_visible():
+                await search_input.click()
+                await asyncio.sleep(random.uniform(0.5, 1.5))
+                await self.page.keyboard.press("Control+a")
+                await self.page.keyboard.press("Backspace")
+                await self.page.keyboard.type(search_term, delay=random.randint(30, 80))
+                await asyncio.sleep(random.uniform(0.5, 1.0))
+                await self.page.keyboard.press("Enter")
+                await asyncio.sleep(random.uniform(3, 6))
+                await self.human_scroll(scroll_count=random.randint(2, 5))
+        except Exception:
+            pass
+
+    async def browse_random_page(self):
+        url = random.choice(BROWSE_URLS)
+        await log(f"  Visiting: {url.split('/')[-2] or 'feed'}...", self.profile_id)
+        try:
+            await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(random.uniform(2, 5))
+            await self.human_scroll(scroll_count=random.randint(2, 6))
+        except Exception as e:
+            await log(f"  Browse error: {str(e)[:40]}", self.profile_id)
+
+    async def build_browser_history(self):
+        num_sites = random.randint(3, 6)
+        urls = random.sample(HISTORY_URLS, min(num_sites, len(HISTORY_URLS)))
+        await log(f"  Building browser history ({num_sites} sites)...", self.profile_id)
+
+        for url in urls:
+            try:
+                await self.page.goto(url, wait_until="domcontentloaded", timeout=15000)
+                await asyncio.sleep(random.uniform(2, 5))
+                scroll_count = random.randint(1, 3)
+                for _ in range(scroll_count):
+                    await self.page.evaluate(f"window.scrollBy(0, {random.randint(100, 400)})")
+                    await asyncio.sleep(random.uniform(1, 3))
+            except Exception:
+                continue
+
+    async def do_heavy_browsing(self):
+        await log("Starting heavy browsing session...", self.profile_id)
+        activities = [
+            self.browse_news_feed,
+            self.browse_marketplace,
+            self.browse_random_page,
+            self.browse_random_page,
+        ]
+        random.shuffle(activities)
+
+        num_activities = random.randint(2, 4)
+        for i in range(num_activities):
+            if not scheduler_state["running"]:
+                break
+            activity = activities[i % len(activities)]
+            await activity()
+            await asyncio.sleep(random.uniform(2, 5))
+
+        if random.random() < 0.4:
+            await self.random_like_posts()
+
+        await log("Heavy browsing session complete", self.profile_id)
+
+
+# ── Marketplace Posting ──────────────────────────────────────────
+
+async def scan_page_elements(page, profile_id: str):
     try:
         info = await page.evaluate("""() => {
             const results = [];
@@ -368,16 +693,16 @@ async def scan_page_elements(page, acc_id: str):
             });
             return results;
         }""")
-        await log(f"  === PAGE ELEMENTS SCAN ({len(info)} found) ===", acc_id)
+        await log(f"  === PAGE ELEMENTS SCAN ({len(info)} found) ===", profile_id)
         for item in info[:25]:
-            await log(f"    {json.dumps(item)}", acc_id)
+            await log(f"    {json.dumps(item)}", profile_id)
         return info
     except Exception as e:
-        await log(f"  Scan error: {str(e)[:50]}", acc_id)
+        await log(f"  Scan error: {str(e)[:50]}", profile_id)
         return []
 
 
-async def react_fill_field(page, field_info: dict, value: str, acc_id: str) -> bool:
+async def react_fill_field(page, field_info: dict, value: str, profile_id: str) -> bool:
     try:
         selector = None
         if field_info.get("ariaLabel"):
@@ -398,15 +723,15 @@ async def react_fill_field(page, field_info: dict, value: str, acc_id: str) -> b
                 await asyncio.sleep(0.1)
                 await page.keyboard.press("Backspace")
                 await asyncio.sleep(0.2)
-                await page.keyboard.type(value, delay=20)
+                await page.keyboard.type(value, delay=random.randint(15, 35))
                 await asyncio.sleep(0.3)
                 return True
         return False
-    except:
+    except Exception:
         return False
 
 
-async def find_and_click_field(page, label_keywords: list, acc_id: str) -> bool:
+async def find_and_click_field(page, label_keywords: list, profile_id: str) -> bool:
     for keyword in label_keywords:
         try:
             for tag in ['input', 'textarea']:
@@ -444,7 +769,7 @@ async def find_and_click_field(page, label_keywords: list, acc_id: str) -> bool:
                     await asyncio.sleep(0.3)
                     return True
 
-        except:
+        except Exception:
             continue
     return False
 
@@ -455,40 +780,38 @@ async def type_in_focused(page, value: str, clear_first: bool = True):
         await asyncio.sleep(0.1)
         await page.keyboard.press("Backspace")
         await asyncio.sleep(0.2)
-    await page.keyboard.type(value, delay=20)
+    await page.keyboard.type(value, delay=random.randint(15, 35))
     await asyncio.sleep(0.3)
 
 
-async def post_to_marketplace(page, listing: dict, acc_id: str) -> bool:
+async def post_to_marketplace(page, listing: dict, profile_id: str) -> bool:
     try:
-        await log(f"Posting: {listing['title'][:50]}...", acc_id)
+        await log(f"Posting: {listing['title'][:50]}...", profile_id)
 
         await page.goto("https://www.facebook.com/marketplace/create/item", wait_until="domcontentloaded", timeout=30000)
-        await asyncio.sleep(5)
+        await asyncio.sleep(random.uniform(4, 7))
 
-        # Dismiss any popups
         try:
             for sel in ['div[aria-label="Close"]', 'div[aria-label="Dismiss"]']:
                 btn = page.locator(sel).first
                 if await btn.count() > 0 and await btn.is_visible():
                     await btn.click()
                     await asyncio.sleep(1)
-        except:
+        except Exception:
             pass
 
-        elements = await scan_page_elements(page, acc_id)
+        elements = await scan_page_elements(page, profile_id)
 
         # Step 1: Upload image
         try:
             file_input = page.locator('input[type="file"]').first
             if await file_input.count() > 0:
                 await file_input.set_input_files(listing["image_path"])
-                await asyncio.sleep(4)
-                await log(f"  Image uploaded", acc_id)
+                await asyncio.sleep(random.uniform(3, 6))
+                await log(f"  Image uploaded", profile_id)
         except Exception as e:
-            await log(f"  Image upload error: {str(e)[:50]}", acc_id)
+            await log(f"  Image upload error: {str(e)[:50]}", profile_id)
 
-        # Build a map of fields from scan
         field_map = {}
         for el in elements:
             aria = el.get("ariaLabel", "").lower()
@@ -505,14 +828,14 @@ async def post_to_marketplace(page, listing: dict, acc_id: str) -> bool:
             elif "category" in aria:
                 field_map["category"] = el
 
-        await log(f"  Fields detected: {list(field_map.keys())}", acc_id)
+        await log(f"  Fields detected: {list(field_map.keys())}", profile_id)
 
         # Step 2: Fill Title
         filled = False
         if "title" in field_map:
-            filled = await react_fill_field(page, field_map["title"], listing["title"], acc_id)
+            filled = await react_fill_field(page, field_map["title"], listing["title"], profile_id)
         if not filled:
-            filled = await find_and_click_field(page, ["Title", "title", "Item name"], acc_id)
+            filled = await find_and_click_field(page, ["Title", "title", "Item name"], profile_id)
             if filled:
                 await type_in_focused(page, listing["title"])
         if not filled:
@@ -528,25 +851,25 @@ async def post_to_marketplace(page, listing: dict, acc_id: str) -> bool:
                 return false;
             }""")
             await asyncio.sleep(0.3)
-            await page.keyboard.type(listing["title"], delay=20)
+            await page.keyboard.type(listing["title"], delay=random.randint(15, 35))
             filled = True
-        await log(f"  Title: {'OK' if filled else 'FAILED'}", acc_id)
-        await asyncio.sleep(0.5)
+        await log(f"  Title: {'OK' if filled else 'FAILED'}", profile_id)
+        await asyncio.sleep(random.uniform(0.5, 1.5))
 
         # Step 3: Fill Price
         filled = False
         if "price" in field_map:
-            filled = await react_fill_field(page, field_map["price"], str(listing["price"]), acc_id)
+            filled = await react_fill_field(page, field_map["price"], str(listing["price"]), profile_id)
         if not filled:
-            filled = await find_and_click_field(page, ["Price", "price"], acc_id)
+            filled = await find_and_click_field(page, ["Price", "price"], profile_id)
             if filled:
                 await type_in_focused(page, str(listing["price"]))
         if not filled:
             await page.keyboard.press("Tab")
             await asyncio.sleep(0.3)
-            await page.keyboard.type(str(listing["price"]), delay=20)
-        await log(f"  Price: ${listing['price']}", acc_id)
-        await asyncio.sleep(0.5)
+            await page.keyboard.type(str(listing["price"]), delay=random.randint(15, 35))
+        await log(f"  Price: ${listing['price']}", profile_id)
+        await asyncio.sleep(random.uniform(0.5, 1.5))
 
         # Step 4: Category
         cat_done = False
@@ -580,7 +903,7 @@ async def post_to_marketplace(page, listing: dict, acc_id: str) -> bool:
                             option_found = True
                             await asyncio.sleep(0.5)
                             break
-                    except:
+                    except Exception:
                         continue
 
                 if not option_found:
@@ -597,9 +920,9 @@ async def post_to_marketplace(page, listing: dict, acc_id: str) -> bool:
                 if not option_found:
                     cat_done = False
         except Exception as e:
-            await log(f"  Category error: {str(e)[:40]}", acc_id)
-        await log(f"  Category: {'OK' if cat_done else 'SKIP'}", acc_id)
-        await asyncio.sleep(0.5)
+            await log(f"  Category error: {str(e)[:40]}", profile_id)
+        await log(f"  Category: {'OK' if cat_done else 'SKIP'}", profile_id)
+        await asyncio.sleep(random.uniform(0.5, 1.0))
 
         # Step 5: Condition
         cond_done = False
@@ -632,20 +955,20 @@ async def post_to_marketplace(page, listing: dict, acc_id: str) -> bool:
                             option_found = True
                             await asyncio.sleep(0.5)
                             break
-                    except:
+                    except Exception:
                         continue
 
                 if not option_found:
                     await page.keyboard.press("Escape")
                     cond_done = False
         except Exception as e:
-            await log(f"  Condition error: {str(e)[:40]}", acc_id)
-        await log(f"  Condition: {'OK' if cond_done else 'SKIP'}", acc_id)
-        await asyncio.sleep(0.5)
+            await log(f"  Condition error: {str(e)[:40]}", profile_id)
+        await log(f"  Condition: {'OK' if cond_done else 'SKIP'}", profile_id)
+        await asyncio.sleep(random.uniform(0.5, 1.0))
 
         # SCROLL DOWN
         await page.evaluate("window.scrollBy(0, 500)")
-        await asyncio.sleep(1)
+        await asyncio.sleep(random.uniform(1, 2))
 
         # Step 6: Description
         filled = False
@@ -659,13 +982,13 @@ async def post_to_marketplace(page, listing: dict, acc_id: str) -> bool:
                     if await el.count() > 0:
                         await el.click()
                         await asyncio.sleep(0.2)
-                        await page.keyboard.type(listing["description"][:500], delay=10)
+                        await page.keyboard.type(listing["description"][:500], delay=random.randint(8, 18))
                         filled = True
                         break
                 if not filled:
-                    await page.keyboard.type(listing["description"][:500], delay=10)
+                    await page.keyboard.type(listing["description"][:500], delay=random.randint(8, 18))
                     filled = True
-        except:
+        except Exception:
             pass
 
         if not filled:
@@ -677,10 +1000,10 @@ async def post_to_marketplace(page, listing: dict, acc_id: str) -> bool:
                     if await ta.is_visible():
                         await ta.click()
                         await asyncio.sleep(0.3)
-                        await page.keyboard.type(listing["description"][:500], delay=10)
+                        await page.keyboard.type(listing["description"][:500], delay=random.randint(8, 18))
                         filled = True
                         break
-            except:
+            except Exception:
                 pass
 
         if not filled:
@@ -691,14 +1014,14 @@ async def post_to_marketplace(page, listing: dict, acc_id: str) -> bool:
                     if await el.count() > 0 and await el.is_visible():
                         await el.click()
                         await asyncio.sleep(0.3)
-                        await page.keyboard.type(listing["description"][:500], delay=10)
+                        await page.keyboard.type(listing["description"][:500], delay=random.randint(8, 18))
                         filled = True
                         break
-                except:
+                except Exception:
                     continue
 
-        await log(f"  Description: {'OK' if filled else 'SKIP'}", acc_id)
-        await asyncio.sleep(0.5)
+        await log(f"  Description: {'OK' if filled else 'SKIP'}", profile_id)
+        await asyncio.sleep(random.uniform(0.5, 1.0))
 
         # Step 7: Location
         location_text = f"{listing['city']}, {listing['state']}"
@@ -719,8 +1042,8 @@ async def post_to_marketplace(page, listing: dict, acc_id: str) -> bool:
                     await page.keyboard.press("Control+a")
                     await page.keyboard.press("Backspace")
                     await asyncio.sleep(0.3)
-                    await page.keyboard.type(location_text, delay=40)
-                    await asyncio.sleep(2.5)
+                    await page.keyboard.type(location_text, delay=random.randint(30, 60))
+                    await asyncio.sleep(random.uniform(2, 4))
                     for s_sel in ['ul[role="listbox"] li', 'div[role="option"]', 'div[role="listbox"] div']:
                         sug = page.locator(s_sel).first
                         if await sug.count() > 0 and await sug.is_visible():
@@ -731,7 +1054,7 @@ async def post_to_marketplace(page, listing: dict, acc_id: str) -> bool:
                         await page.keyboard.press("Enter")
                         loc_done = True
                     break
-            except:
+            except Exception:
                 continue
 
         if not loc_done:
@@ -740,16 +1063,16 @@ async def post_to_marketplace(page, listing: dict, acc_id: str) -> bool:
                 if await loc_label.count() > 0 and await loc_label.is_visible():
                     await loc_label.click()
                     await asyncio.sleep(0.5)
-                    await page.keyboard.type(location_text, delay=40)
-                    await asyncio.sleep(2.5)
+                    await page.keyboard.type(location_text, delay=random.randint(30, 60))
+                    await asyncio.sleep(random.uniform(2, 4))
                     sug = page.locator('div[role="option"]').first
                     if await sug.count() > 0:
                         await sug.click()
                         loc_done = True
-            except:
+            except Exception:
                 pass
 
-        await log(f"  Location: {'OK' if loc_done else 'SKIP'}", acc_id)
+        await log(f"  Location: {'OK' if loc_done else 'SKIP'} ({location_text})", profile_id)
         await asyncio.sleep(1)
 
         # Step 8: Next / Publish
@@ -764,12 +1087,12 @@ async def post_to_marketplace(page, listing: dict, acc_id: str) -> bool:
                     btn = page.locator(sel).first
                     if await btn.count() > 0 and await btn.is_visible():
                         await btn.click()
-                        await asyncio.sleep(3)
+                        await asyncio.sleep(random.uniform(2, 4))
                         published = True
                         break
                 if published:
                     break
-            except:
+            except Exception:
                 continue
 
         if published:
@@ -783,45 +1106,81 @@ async def post_to_marketplace(page, listing: dict, acc_id: str) -> bool:
                     btn = page.locator(sel).first
                     if await btn.count() > 0 and await btn.is_visible():
                         await btn.click()
-                        await asyncio.sleep(3)
+                        await asyncio.sleep(random.uniform(2, 4))
                         break
-                except:
+                except Exception:
                     continue
 
-        await log(f"  DONE: {listing['title'][:40]} | {listing['city']}, {listing['state']} | ${listing['price']}", acc_id)
+        await log(f"  POSTED: {listing['title'][:40]} | {listing['city']}, {listing['state']} | ${listing['price']}", profile_id)
         return True
 
     except Exception as e:
-        await log(f"  Error: {str(e)[:80]}", acc_id)
+        await log(f"  Error: {str(e)[:80]}", profile_id)
         return False
 
 
-async def run_account(pw, account: AccountConfig, acc_id: str, listings: list, config: ListingConfig):
-    listing_state["accounts"][acc_id] = {"status": "starting", "completed": 0, "current": "", "total": len(listings)}
+# ── Scheduler Engine ─────────────────────────────────────────────
+
+async def run_profile_scheduler(pw, slot: int, config: dict, images: list[Path], scheduler_config: dict):
+    """Run the scheduler for a single profile - posts 1 listing per hour, max 3 per day."""
+    profile_id = str(slot)
+    slot_data = load_slot(slot)
+    profile_config = load_profile_config(slot)
+    schedule = load_schedule(slot)
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    if schedule.get("last_reset_date") != today:
+        schedule["listings_today"] = 0
+        schedule["last_reset_date"] = today
+        save_schedule(slot, schedule)
+
+    scheduler_state["profiles"][profile_id] = {
+        "status": "starting",
+        "slot": slot,
+        "name": slot_data.get("name", f"Profile {slot}"),
+        "city_group": profile_config.get("city_group", ""),
+        "listings_today": schedule["listings_today"],
+        "max_daily": MAX_LISTINGS_PER_DAY,
+        "current_activity": "Initializing...",
+        "next_listing_time": None,
+    }
 
     try:
-        user_data_dir = str(BASE_DIR / "browser_profiles" / f"account_{acc_id}")
+        proxy_str = profile_config.get("proxy", "")
+        proxy_config = None
+        if proxy_str:
+            proxy_config = {"server": proxy_str}
+            await log(f"Using proxy: {proxy_str[:30]}...", profile_id)
+
+        user_data_dir = str(PROFILES_DIR / f"profile_{slot}")
         os.makedirs(user_data_dir, exist_ok=True)
 
-        await log(f"Launching browser...", acc_id)
+        await log(f"Launching browser...", profile_id)
+        launch_args = [
+            "--no-sandbox",
+            "--disable-blink-features=AutomationControlled",
+            "--disable-infobars",
+            "--disable-dev-shm-usage",
+        ]
+
         context = await pw.chromium.launch_persistent_context(
             user_data_dir=user_data_dir,
             headless=False,
             viewport={"width": 1280, "height": 720},
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            args=[
-                "--no-sandbox",
-                "--disable-blink-features=AutomationControlled",
-                "--disable-infobars",
-                "--disable-dev-shm-usage",
-            ],
+            proxy=proxy_config,
+            args=launch_args,
             ignore_default_args=["--enable-automation"],
         )
 
         page = context.pages[0] if context.pages else await context.new_page()
         await page.add_init_script(STEALTH_JS)
 
-        await log("Checking login status...", acc_id)
+        human = HumanBehavior(page, profile_id)
+
+        # Login check
+        scheduler_state["profiles"][profile_id]["current_activity"] = "Checking login..."
+        await log("Checking login status...", profile_id)
         await page.goto("https://www.facebook.com", wait_until="domcontentloaded", timeout=30000)
         await asyncio.sleep(3)
         await handle_cookie_consent(page)
@@ -829,63 +1188,161 @@ async def run_account(pw, account: AccountConfig, acc_id: str, listings: list, c
         already_logged_in = await check_logged_in(page)
 
         if already_logged_in:
-            await log("Already logged in (saved session)!", acc_id)
+            await log("Already logged in (saved session)!", profile_id)
         else:
-            if account.cookies_json.strip():
-                success = await login_with_cookies(context, page, account.cookies_json, acc_id)
+            cookies_json = json.dumps(slot_data.get("cookies", []))
+            if cookies_json.strip() and cookies_json != "[]":
+                success = await login_with_cookies(context, page, cookies_json, profile_id)
             else:
-                await log("ERROR: No cookies provided!", acc_id)
-                listing_state["accounts"][acc_id]["status"] = "failed"
+                await log("ERROR: No cookies found!", profile_id)
+                scheduler_state["profiles"][profile_id]["status"] = "failed"
                 await context.close()
                 return
 
             if not success:
-                listing_state["accounts"][acc_id]["status"] = "login_failed"
+                scheduler_state["profiles"][profile_id]["status"] = "login_failed"
                 await context.close()
                 return
 
-        listing_state["accounts"][acc_id]["status"] = "running"
-        await log(f"Starting {len(listings)} listings...", acc_id)
+        scheduler_state["profiles"][profile_id]["status"] = "running"
 
-        for i, listing in enumerate(listings):
-            if not listing_state["running"]:
-                await log("Stopped by user", acc_id)
-                break
+        # Build browser history on first run
+        scheduler_state["profiles"][profile_id]["current_activity"] = "Building browser history..."
+        await human.build_browser_history()
 
-            listing_state["accounts"][acc_id]["current"] = f"{listing['title'][:35]} -> {listing['city']}, {listing['state']}"
-            await log(f"[{i+1}/{len(listings)}] {listing['title'][:50]}", acc_id)
-            await log(f"  City: {listing['city']}, {listing['state']} | ${listing['price']} | {listing['condition']}", acc_id)
+        # Get city group for this profile
+        city_group_key = profile_config.get("city_group", "")
+        region_cities = []
+        if city_group_key and city_group_key in CITY_GROUPS:
+            region_cities = CITY_GROUPS[city_group_key]["cities"]
+            await log(f"City region: {CITY_GROUPS[city_group_key]['label']} ({len(region_cities)} cities)", profile_id)
+        else:
+            region_cities = ALL_CITIES[:20]
+            await log(f"No city group assigned, using default cities", profile_id)
 
-            success = await post_to_marketplace(page, listing, acc_id)
+        # Main scheduler loop
+        listing_index = 0
+        while scheduler_state["running"]:
+            today = datetime.now().strftime("%Y-%m-%d")
+            if schedule.get("last_reset_date") != today:
+                schedule["listings_today"] = 0
+                schedule["last_reset_date"] = today
+                await log(f"New day! Resetting daily counter.", profile_id)
+
+            if schedule["listings_today"] >= MAX_LISTINGS_PER_DAY:
+                scheduler_state["profiles"][profile_id]["current_activity"] = f"Daily limit reached ({MAX_LISTINGS_PER_DAY}/{MAX_LISTINGS_PER_DAY}). Browsing..."
+                await log(f"Daily limit reached ({MAX_LISTINGS_PER_DAY} listings). Browsing only...", profile_id)
+                await human.do_heavy_browsing()
+                await asyncio.sleep(random.uniform(300, 600))
+                continue
+
+            # Check if enough time has passed since last listing
+            if schedule.get("last_listing_time"):
+                last_time = datetime.fromisoformat(schedule["last_listing_time"])
+                elapsed = (datetime.now() - last_time).total_seconds()
+                remaining = (LISTING_INTERVAL_MINUTES * 60) - elapsed
+                if remaining > 0:
+                    next_time = datetime.now() + timedelta(seconds=remaining)
+                    scheduler_state["profiles"][profile_id]["current_activity"] = f"Waiting until {next_time.strftime('%H:%M')} for next listing. Browsing..."
+                    scheduler_state["profiles"][profile_id]["next_listing_time"] = next_time.strftime("%H:%M:%S")
+                    await log(f"Next listing at {next_time.strftime('%H:%M')}. Browsing in meantime...", profile_id)
+
+                    # Heavy browsing while waiting
+                    while remaining > 0 and scheduler_state["running"]:
+                        browse_duration = min(remaining, random.uniform(180, 420))
+                        scheduler_state["profiles"][profile_id]["current_activity"] = f"Browsing... (next listing in {int(remaining/60)} min)"
+
+                        await human.do_heavy_browsing()
+
+                        remaining = remaining - browse_duration
+                        if remaining > 60:
+                            pause = random.uniform(30, 120)
+                            scheduler_state["profiles"][profile_id]["current_activity"] = f"Idle pause... (next listing in {int(remaining/60)} min)"
+                            await asyncio.sleep(pause)
+                            remaining -= pause
+
+                    if not scheduler_state["running"]:
+                        break
+
+            # Pre-listing browsing
+            scheduler_state["profiles"][profile_id]["current_activity"] = "Pre-listing browsing..."
+            await log("Pre-listing browsing...", profile_id)
+            await human.browse_news_feed(duration_minutes=random.uniform(1, 3))
+            await human.browse_marketplace(duration_minutes=random.uniform(1, 2))
+
+            # Select image and city for listing
+            if listing_index >= len(images):
+                listing_index = 0
+                random.shuffle(images)
+
+            img_path = images[listing_index]
+            listing_index += 1
+
+            city_data = random.choice(region_cities)
+            title = extract_title_from_filename(img_path.name)
+            if not title or len(title) < 3:
+                title = f"{scheduler_config['service_type']} #{listing_index}"
+
+            listing = {
+                "title": title,
+                "description": generate_description(title, city_data["city"], city_data["state"]),
+                "price": random.randint(scheduler_config["min_price"], scheduler_config["max_price"]),
+                "category": random.choice(ALL_CATEGORIES),
+                "condition": random.choice(CONDITIONS),
+                "city": city_data["city"],
+                "state": city_data["state"],
+                "zip": city_data.get("zip", ""),
+                "image_path": str(img_path),
+                "image_name": img_path.name,
+            }
+
+            # Post listing
+            scheduler_state["profiles"][profile_id]["current_activity"] = f"Posting: {title[:30]}..."
+            success = await post_to_marketplace(page, listing, profile_id)
 
             if success:
-                listing_state["accounts"][acc_id]["completed"] += 1
-                listing_state["completed"] += 1
+                schedule["listings_today"] += 1
+                schedule["last_listing_time"] = datetime.now().isoformat()
+                schedule["history"].append({
+                    "title": listing["title"],
+                    "city": listing["city"],
+                    "state": listing["state"],
+                    "price": listing["price"],
+                    "time": datetime.now().isoformat(),
+                    "success": True,
+                })
+                if len(schedule["history"]) > 100:
+                    schedule["history"] = schedule["history"][-100:]
+                save_schedule(slot, schedule)
+                scheduler_state["profiles"][profile_id]["listings_today"] = schedule["listings_today"]
 
-            if i < len(listings) - 1 and listing_state["running"]:
-                delay = config.delay_between + random.randint(-5, 10)
-                delay = max(10, delay)
-                await log(f"  Waiting {delay}s...", acc_id)
-                await asyncio.sleep(delay)
+                await log(f"Listing {schedule['listings_today']}/{MAX_LISTINGS_PER_DAY} done for today", profile_id)
+
+            # Post-listing browsing
+            scheduler_state["profiles"][profile_id]["current_activity"] = "Post-listing browsing..."
+            await log("Post-listing browsing...", profile_id)
+            await human.browse_news_feed(duration_minutes=random.uniform(1, 3))
+
+            if schedule["listings_today"] >= MAX_LISTINGS_PER_DAY:
+                await log(f"Daily limit reached! Will continue browsing only.", profile_id)
 
         await context.close()
-        acc_completed = listing_state["accounts"][acc_id]["completed"]
-        listing_state["accounts"][acc_id]["status"] = "done"
-        await log(f"Complete! {acc_completed}/{len(listings)} listings posted", acc_id)
+        scheduler_state["profiles"][profile_id]["status"] = "stopped"
+        await log(f"Profile stopped. Total listings today: {schedule['listings_today']}", profile_id)
 
     except Exception as e:
-        await log(f"ERROR: {str(e)[:80]}", acc_id)
-        listing_state["accounts"][acc_id]["status"] = "error"
+        await log(f"ERROR: {str(e)[:80]}", profile_id)
+        scheduler_state["profiles"][profile_id]["status"] = "error"
+        scheduler_state["profiles"][profile_id]["current_activity"] = f"Error: {str(e)[:50]}"
 
 
-async def run_listing_engine(config: ListingConfig):
+async def run_scheduler_engine(config: SchedulerStartRequest):
     from playwright.async_api import async_playwright
 
-    listing_state["running"] = True
-    listing_state["completed"] = 0
-    listing_state["error"] = ""
-    listing_state["logs"] = []
-    listing_state["accounts"] = {}
+    scheduler_state["running"] = True
+    scheduler_state["profiles"] = {}
+    scheduler_state["logs"] = []
+    scheduler_state["start_time"] = datetime.now().isoformat()
 
     try:
         images = get_image_files(config.image_folder)
@@ -894,75 +1351,60 @@ async def run_listing_engine(config: ListingConfig):
 
         if not images:
             await log(f"ERROR: No images found in {config.image_folder}")
-            listing_state["running"] = False
-            listing_state["error"] = "No images found"
+            scheduler_state["running"] = False
             return
 
-        valid_accounts = [acc for acc in config.accounts if acc.cookies_json.strip()]
-
-        if not valid_accounts:
-            await log("ERROR: No valid accounts with cookies!")
-            listing_state["running"] = False
-            listing_state["error"] = "No valid accounts"
-            return
-
-        num_accounts = len(valid_accounts)
-        listing_state["total"] = len(images)
+        random.shuffle(images)
         await log(f"Found {len(images)} images")
-        await log(f"Active accounts: {num_accounts}")
 
-        cities = ALL_CITIES.copy()
-        random.shuffle(cities)
+        enabled_profiles = []
+        for slot in range(1, MAX_SLOTS + 1):
+            slot_data = load_slot(slot)
+            profile_config = load_profile_config(slot)
+            if slot_data and profile_config.get("enabled", False):
+                enabled_profiles.append(slot)
 
-        all_listings = []
-        for i, img_path in enumerate(images):
-            city_data = cities[i % len(cities)]
-            title = extract_title_from_filename(img_path.name)
-            if not title or len(title) < 3:
-                title = f"{config.service_type} #{i+1}"
+        if not enabled_profiles:
+            await log("ERROR: No enabled profiles found! Enable at least one profile.")
+            scheduler_state["running"] = False
+            return
 
-            all_listings.append({
-                "title": title,
-                "description": generate_description(title, city_data["city"], city_data["state"]),
-                "price": random.randint(config.min_price, config.max_price),
-                "category": random.choice(ALL_CATEGORIES),
-                "condition": random.choice(CONDITIONS),
-                "city": city_data["city"],
-                "state": city_data["state"],
-                "zip": city_data["zip"],
-                "image_path": str(img_path),
-                "image_name": img_path.name,
-            })
-
-        chunks = [[] for _ in range(num_accounts)]
-        for i, listing in enumerate(all_listings):
-            chunks[i % num_accounts].append(listing)
-
-        await log(f"Listings per account: {[len(c) for c in chunks]}")
+        await log(f"Active profiles: {len(enabled_profiles)} (slots: {enabled_profiles})")
+        await log(f"Schedule: 1 listing per {LISTING_INTERVAL_MINUTES} min, max {MAX_LISTINGS_PER_DAY} per day")
         await log("")
-        await log("-- Preview (first 5) --")
-        for l in all_listings[:5]:
-            await log(f"  {l['title'][:40]} | {l['city']}, {l['state']} | ${l['price']}")
-        await log("")
+
+        scheduler_config = {
+            "service_type": config.service_type,
+            "min_price": config.min_price,
+            "max_price": config.max_price,
+        }
 
         async with async_playwright() as pw:
             tasks = []
-            for idx, account in enumerate(valid_accounts):
-                acc_id = str(idx + 1)
-                task = asyncio.create_task(run_account(pw, account, acc_id, chunks[idx], config))
+            for slot in enabled_profiles:
+                profile_images = images.copy()
+                random.shuffle(profile_images)
+                task = asyncio.create_task(
+                    run_profile_scheduler(pw, slot, {}, profile_images, scheduler_config)
+                )
                 tasks.append(task)
 
             await asyncio.gather(*tasks, return_exceptions=True)
 
         await log("")
-        await log(f"=== ALL COMPLETE! {listing_state['completed']}/{listing_state['total']} listings posted ===")
+        await log("=== SCHEDULER STOPPED ===")
 
     except Exception as e:
         await log(f"ERROR: {str(e)}")
-        listing_state["error"] = str(e)
     finally:
-        listing_state["running"] = False
-        await broadcast({"type": "done", "state": listing_state})
+        scheduler_state["running"] = False
+        await broadcast({"type": "done", "state": {
+            "running": False,
+            "profiles": {
+                k: {key: val for key, val in v.items() if key not in ("page", "context", "browser")}
+                for k, v in scheduler_state["profiles"].items()
+            },
+        }})
 
 
 # ── API Routes ────────────────────────────────────────────────────
@@ -978,6 +1420,10 @@ async def get_stats():
         "cities": len(ALL_CITIES),
         "categories": len(ALL_CATEGORIES),
         "conditions": len(CONDITIONS),
+        "city_groups": {k: v["label"] for k, v in CITY_GROUPS.items()},
+        "max_slots": MAX_SLOTS,
+        "max_daily": MAX_LISTINGS_PER_DAY,
+        "interval_minutes": LISTING_INTERVAL_MINUTES,
     }
 
 
@@ -1038,249 +1484,111 @@ async def delete_slot_api(slot: int):
     return {"status": "deleted", "slot": slot}
 
 
-@app.delete("/api/slots")
-async def clear_all_slots_api():
-    deleted = 0
-    for i in range(1, MAX_SLOTS + 1):
-        if get_cookie_file(i).exists():
-            delete_slot(i)
-            deleted += 1
-    return {"status": "cleared", "deleted": deleted}
+# ── Profile Config APIs ──────────────────────────────────────────
+
+@app.get("/api/profile/{slot}")
+async def get_profile(slot: int):
+    if slot < 1 or slot > MAX_SLOTS:
+        return {"error": f"Slot 1-{MAX_SLOTS} ke beech hona chahiye"}
+    config = load_profile_config(slot)
+    return {"slot": slot, "config": config}
 
 
-# ── Listing APIs ──────────────────────────────────────────────────
+@app.post("/api/profile/{slot}")
+async def save_profile(slot: int, req: ProfileConfigRequest):
+    if slot < 1 or slot > MAX_SLOTS:
+        return {"error": f"Slot 1-{MAX_SLOTS} ke beech hona chahiye"}
 
-@app.post("/api/preview")
-async def preview_listings(config: ListingConfig):
-    images = get_image_files(config.image_folder)
-    if not images:
-        images = get_image_files(os.path.join(config.image_folder, "images"))
-
-    if not images:
-        return {"error": f"No images found in {config.image_folder}", "listings": []}
-
-    cities = ALL_CITIES.copy()
-    random.shuffle(cities)
-
-    preview = []
-    for i, img_path in enumerate(images[:20]):
-        city_data = cities[i % len(cities)]
-        title = extract_title_from_filename(img_path.name)
-        if not title or len(title) < 3:
-            title = f"{config.service_type} #{i+1}"
-
-        preview.append({
-            "number": i + 1,
-            "title": title,
-            "description": generate_description(title, city_data["city"], city_data["state"])[:100] + "...",
-            "price": random.randint(config.min_price, config.max_price),
-            "category": random.choice(ALL_CATEGORIES),
-            "condition": random.choice(CONDITIONS),
-            "city": f"{city_data['city']}, {city_data['state']}",
-            "image": img_path.name,
-        })
-
-    return {"total_images": len(images), "listings": preview}
+    config = {
+        "proxy": req.proxy,
+        "city_group": req.city_group,
+        "enabled": req.enabled,
+    }
+    save_profile_config(slot, config)
+    return {"status": "saved", "slot": slot, "config": config}
 
 
-@app.post("/api/open-tabs")
-async def open_all_tabs_api(data: dict):
-    if open_tabs_state["running"]:
-        return {"error": "Tabs pehle se open hain! Pehle 'Close All Tabs' karo."}
+# ── Schedule APIs ─────────────────────────────────────────────────
 
-    accounts_data = data.get("accounts", [])
-    if not accounts_data:
-        return {"error": "Koi account select nahi hua!"}
+@app.get("/api/schedule/{slot}")
+async def get_schedule_api(slot: int):
+    if slot < 1 or slot > MAX_SLOTS:
+        return {"error": f"Slot 1-{MAX_SLOTS} ke beech hona chahiye"}
+    schedule = load_schedule(slot)
+    return {"slot": slot, "schedule": schedule}
 
-    valid_accounts = []
-    for acc in accounts_data:
-        if acc.get("cookies_json", "").strip():
-            valid_accounts.append(AccountConfig(
-                cookies_json=acc["cookies_json"],
-                account_id=acc.get("account_id", ""),
-                account_name=acc.get("account_name", ""),
-            ))
 
-    if not valid_accounts:
-        return {"error": "Koi valid account nahi mila cookies ke saath!"}
+@app.post("/api/schedule/{slot}/reset")
+async def reset_schedule(slot: int):
+    if slot < 1 or slot > MAX_SLOTS:
+        return {"error": f"Slot 1-{MAX_SLOTS} ke beech hona chahiye"}
+    schedule = {
+        "listings_today": 0,
+        "last_listing_time": None,
+        "last_reset_date": datetime.now().strftime("%Y-%m-%d"),
+        "history": [],
+    }
+    save_schedule(slot, schedule)
+    return {"status": "reset", "slot": slot}
 
-    asyncio.create_task(_open_tabs_worker(valid_accounts))
+
+# ── Scheduler Control APIs ───────────────────────────────────────
+
+@app.post("/api/scheduler/start")
+async def start_scheduler(config: SchedulerStartRequest):
+    if scheduler_state["running"]:
+        return {"error": "Scheduler already running!"}
+    asyncio.create_task(run_scheduler_engine(config))
+    return {"status": "started", "message": "Scheduler started! Browsing and listing will begin."}
+
+
+@app.post("/api/scheduler/stop")
+async def stop_scheduler():
+    scheduler_state["running"] = False
+    return {"status": "stopping", "message": "Scheduler is stopping..."}
+
+
+@app.get("/api/scheduler/status")
+async def get_scheduler_status():
+    profiles_clean = {}
+    for k, v in scheduler_state["profiles"].items():
+        profiles_clean[k] = {
+            key: val for key, val in v.items()
+            if key not in ("page", "context", "browser")
+        }
     return {
-        "status": "opening",
-        "message": f"{len(valid_accounts)} accounts ke liye tabs open ho rahi hain...",
-        "count": len(valid_accounts),
+        "running": scheduler_state["running"],
+        "profiles": profiles_clean,
+        "start_time": scheduler_state.get("start_time"),
+        "log_count": len(scheduler_state["logs"]),
     }
 
 
-async def _open_tabs_worker(accounts: list[AccountConfig]):
-    from playwright.async_api import async_playwright
-
-    open_tabs_state["running"] = True
-    open_tabs_state["pages"] = {}
-
-    try:
-        pw = await async_playwright().start()
-        open_tabs_state["playwright_instance"] = pw
-
-        browser = await pw.chromium.launch(
-            headless=False,
-            args=[
-                "--no-sandbox",
-                "--disable-blink-features=AutomationControlled",
-                "--disable-infobars",
-                "--disable-dev-shm-usage",
-                "--start-maximized",
-            ],
-        )
-        open_tabs_state["browser"] = browser
-
-        results = []
-        for idx, account in enumerate(accounts):
-            acc_id = account.account_id or str(idx + 1)
-            acc_name = account.account_name or f"FB {acc_id}"
-
-            try:
-                context = await browser.new_context(
-                    viewport={"width": 1280, "height": 720},
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                )
-
-                page = await context.new_page()
-                await page.add_init_script(STEALTH_JS)
-
-                cookies = json.loads(account.cookies_json)
-                if isinstance(cookies, list):
-                    clean_cookies = []
-                    for cookie in cookies:
-                        c = {}
-                        c["name"] = cookie.get("name", "")
-                        c["value"] = cookie.get("value", "")
-                        c["domain"] = cookie.get("domain", ".facebook.com")
-                        c["path"] = cookie.get("path", "/")
-                        if not c["name"] or not c["value"]:
-                            continue
-                        if "facebook.com" in c["domain"] and not c["domain"].startswith("."):
-                            c["domain"] = "." + c["domain"]
-                        if cookie.get("secure"):
-                            c["secure"] = True
-                        if cookie.get("httpOnly"):
-                            c["httpOnly"] = True
-                        if cookie.get("sameSite"):
-                            s = str(cookie["sameSite"]).capitalize()
-                            if s in ["Strict", "Lax", "None"]:
-                                c["sameSite"] = s
-                        clean_cookies.append(c)
-
-                    if clean_cookies:
-                        await context.add_cookies(clean_cookies)
-
-                await page.goto("https://www.facebook.com", wait_until="domcontentloaded", timeout=30000)
-                await asyncio.sleep(2)
-                await handle_cookie_consent(page)
-
-                logged_in = await check_logged_in(page)
-
-                open_tabs_state["pages"][acc_id] = {
-                    "page": page,
-                    "context": context,
-                    "name": acc_name,
-                    "logged_in": logged_in,
-                }
-
-                status = "logged_in" if logged_in else "login_failed"
-                results.append({"id": acc_id, "name": acc_name, "status": status})
-                await log(f"Tab opened: {acc_name} ({acc_id}) - {'Logged In' if logged_in else 'Login Failed'}")
-
-            except Exception as e:
-                results.append({"id": acc_id, "name": acc_name, "status": "error", "error": str(e)[:100]})
-                await log(f"Tab error: {acc_name} ({acc_id}) - {str(e)[:60]}")
-
-        await broadcast({
-            "type": "tabs_opened",
-            "results": results,
-            "total": len(results),
-            "logged_in": sum(1 for r in results if r["status"] == "logged_in"),
-        })
-
-    except Exception as e:
-        await broadcast({"type": "tabs_error", "error": str(e)})
-        open_tabs_state["running"] = False
+@app.get("/api/scheduler/logs")
+async def get_scheduler_logs(limit: int = 100):
+    return {"logs": scheduler_state["logs"][-limit:]}
 
 
-@app.post("/api/close-tabs")
-async def close_all_tabs():
-    try:
-        for acc_id, data in open_tabs_state["pages"].items():
-            try:
-                if data.get("context"):
-                    await data["context"].close()
-            except:
-                pass
-
-        if open_tabs_state.get("browser"):
-            try:
-                await open_tabs_state["browser"].close()
-            except:
-                pass
-
-        if open_tabs_state.get("playwright_instance"):
-            try:
-                await open_tabs_state["playwright_instance"].stop()
-            except:
-                pass
-
-        open_tabs_state["browser"] = None
-        open_tabs_state["playwright_instance"] = None
-        open_tabs_state["pages"] = {}
-        open_tabs_state["running"] = False
-
-        return {"status": "closed", "message": "Sab tabs band ho gayi!"}
-    except Exception as e:
-        open_tabs_state["running"] = False
-        return {"error": str(e)}
-
-
-@app.get("/api/tabs-status")
-async def get_tabs_status():
-    tabs = []
-    for acc_id, data in open_tabs_state["pages"].items():
-        tabs.append({
-            "id": acc_id,
-            "name": data.get("name", ""),
-            "logged_in": data.get("logged_in", False),
-        })
-    return {"running": open_tabs_state["running"], "tabs": tabs, "total": len(tabs)}
-
-
-@app.post("/api/start")
-async def start_listing(config: ListingConfig):
-    if listing_state["running"]:
-        return {"error": "Already running!"}
-    asyncio.create_task(run_listing_engine(config))
-    return {"status": "started"}
-
-
-@app.post("/api/stop")
-async def stop_listing():
-    listing_state["running"] = False
-    return {"status": "stopping"}
-
+# ── WebSocket ─────────────────────────────────────────────────────
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     connected_clients.append(websocket)
     try:
+        profiles_clean = {}
+        for k, v in scheduler_state["profiles"].items():
+            profiles_clean[k] = {
+                key: val for key, val in v.items()
+                if key not in ("page", "context", "browser")
+            }
         await websocket.send_json({
             "type": "init",
             "state": {
-                "running": listing_state["running"],
-                "total": listing_state["total"],
-                "completed": listing_state["completed"],
-                "current": listing_state["current"],
-                "accounts": listing_state.get("accounts", {}),
+                "running": scheduler_state["running"],
+                "profiles": profiles_clean,
             },
-            "logs": listing_state["logs"][-100:],
+            "logs": scheduler_state["logs"][-100:],
         })
         while True:
             await websocket.receive_text()
@@ -1295,16 +1603,17 @@ if __name__ == "__main__":
     import uvicorn
     print("""
  ====================================================
-   Facebook Marketplace Auto Lister v6
+   Facebook Marketplace Auto Lister v7
    ------------------------------------
    Open in browser: http://localhost:8000
    
    Features:
-   - 10 Cookie Slots (backend me saved)
-   - Sirf cookies se login
-   - Jab chaaho new cookies daal ke kaam start karo
-   - 270+ American cities
-   - Auto random categories, prices, conditions
+   - 5 Profile Slots with dedicated proxies
+   - Human-like behavior (scrolling, likes, browsing)
+   - Smart scheduling (1/hour, max 3/day)
+   - City-specific listings per profile
+   - Heavy browsing between listings
+   - Browser history building
    
    Press Ctrl+C to stop
  ====================================================
